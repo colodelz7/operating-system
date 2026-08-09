@@ -1,0 +1,27 @@
+{
+  "name": "colodel-tarefas-backend",
+  "version": "0.3.0",
+  "description": "Sistema interno de tarefas da Colodel - backend (Node + Express, API pura)",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18.18.0 <23.0.0"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/integracao.test.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.1",
+    "express-session": "^1.18.0",
+    "multer": "^2.0.2",
+    "pg": "^8.11.5",
+    "zod": "^3.23.8"
+  }
+}

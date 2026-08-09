@@ -1,0 +1,136 @@
+/* ============================================================
+   Colodel · Tokens
+   Dois temas: escuro (padrao, baseado no Sistema Comercial)
+   e claro (identidade Colodel do Manual da Marca).
+   Alternavel via [data-theme] no <html>.
+   ============================================================ */
+
+:root {
+  /* -------- Tipografia -------- */
+  --fonte: 'Poppins', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* -------- Espacamento (base 4px) -------- */
+  --xs: 4px;  --sm: 8px;  --base: 16px;  --lg: 24px;
+  --xl: 32px; --xxl: 48px; --section: 64px;
+
+  /* -------- Raio -------- */
+  --raio-sm: 8px;
+  --raio:    14px;
+  --raio-lg: 20px;
+
+  /* -------- Transicao (curva com carater, nao a default) -------- */
+  --t: 200ms cubic-bezier(.16, 1, .3, 1);
+
+  /* -------- Cores de etapa (kanban) -------- */
+  --st-afazer:     #f5a623; /* pendente / a fazer  -> laranja */
+  --st-andamento:  #008afc; /* em andamento        -> azul   */
+  --st-retrabalho: #ff6b4a; /* retrabalho / revisão-> coral  */
+  --st-concluida:  #1ecb7a; /* aprovado / concluído-> verde  */
+  --st-atrasada:   #ff5c5c; /* atrasado            -> vermelho*/
+}
+
+/* ============================================================
+   TEMA ESCURO — padrao (paleta do Sistema Comercial)
+   ============================================================ */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:          #01071a;
+  --surface:     #0a1535;
+  --surface-2:   #060f28;
+  --surface-3:   #12224a;
+
+  --txt:         #eef3fb;
+  --txt-strong:  #ffffff;
+  --muted:       #8296b8;
+
+  --linha:       rgba(0, 138, 252, .16);
+  --linha-forte: rgba(0, 138, 252, .30);
+
+  --brand:         #008afc;
+  --brand-700:     #0a74d0;
+  --brand-soft:    rgba(0, 138, 252, .12);
+  --brand-soft-2:  rgba(0, 138, 252, .18);
+  --brand-contrast:#01071a;
+
+  --neon:      #29c3ff;
+  --neon-600:  #0a9fe0;
+  --neon-soft: rgba(41, 195, 255, .12);
+
+  /* Sidebar */
+  --side-bg:        #060f28;
+  --side-txt:       #e8f0fb;
+  --side-muted:     rgba(200, 212, 232, .48);
+  --side-hover:     rgba(0, 138, 252, .12);
+  --side-active:    rgba(0, 138, 252, .20);
+  --side-active-txt:#ffffff;
+  --side-linha:     rgba(0, 138, 252, .16);
+
+  /* Estados */
+  --alerta:      #ff5c5c;
+  --alerta-soft: rgba(255, 92, 92, .14);
+  --sucesso:     #1ecb7a;
+  --sucesso-soft:rgba(30, 203, 122, .14);
+
+  /* Sombras (discretas no escuro) */
+  --sombra-sm: 0 1px 2px rgba(0, 0, 0, .35);
+  --sombra:    0 12px 34px rgba(0, 0, 0, .45);
+  --sombra-brand: 0 10px 26px rgba(0, 138, 252, .30);
+
+  /* -------- Aliases legados (usados inline pelos JS e regras antigas) -------- */
+  --royal: var(--brand);
+  --royal-700: var(--brand-700);
+  --royal-soft: var(--brand-soft);
+  --royal-soft-2: var(--brand-soft-2);
+  --ink: var(--txt);
+  --white: var(--surface);
+  --off-white: var(--surface-2);
+  --linha-suave: var(--linha);
+}
+
+/* ============================================================
+   TEMA CLARO — identidade Colodel (Manual da Marca 2026)
+   ============================================================ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:          #f7f7fc;
+  --surface:     #ffffff;
+  --surface-2:   #f7f7fc;
+  --surface-3:   #eef0f8;
+
+  --txt:         #1a1a2e;
+  --txt-strong:  #12111f;
+  --muted:       #6a6a8a;
+
+  --linha:       #e7e7f0;
+  --linha-forte: #d5d5e4;
+
+  --brand:         #120a8f;
+  --brand-700:     #1a12a8;
+  --brand-soft:    rgba(18, 10, 143, .06);
+  --brand-soft-2:  rgba(18, 10, 143, .10);
+  --brand-contrast:#ffffff;
+
+  --neon:      #009fe3;
+  --neon-600:  #0089c4;
+  --neon-soft: rgba(0, 159, 227, .10);
+
+  --side-bg:        #120a8f;
+  --side-txt:       #ffffff;
+  --side-muted:     rgba(255, 255, 255, .55);
+  --side-hover:     rgba(255, 255, 255, .08);
+  --side-active:    rgba(255, 255, 255, .16);
+  --side-active-txt:#ffffff;
+  --side-linha:     rgba(255, 255, 255, .12);
+
+  --alerta:      #e5484d;
+  --alerta-soft: #fdecec;
+  --sucesso:     #1f9d64;
+  --sucesso-soft:#e7f6ee;
+
+  --sombra-sm: 0 1px 2px rgba(26, 26, 46, .06);
+  --sombra:    0 1px 2px rgba(26, 26, 46, .04), 0 8px 24px rgba(26, 26, 46, .06);
+  --sombra-brand: 0 10px 30px rgba(18, 10, 143, .28);
+}
