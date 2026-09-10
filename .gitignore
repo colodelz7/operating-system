@@ -1,0 +1,39 @@
+# ============================================================
+#  Sistema Operacional :: arquivos que NUNCA vao para o repositorio
+# ============================================================
+
+# Dependencias
+node_modules/
+
+# Variaveis de ambiente (segredo de sessao, string do banco, chaves)
+.env
+.env.*
+!.env.example
+
+# Build do frontend (gerado por "npm run build")
+dist/
+build/
+
+# Arquivos enviados pelos usuarios (logos, anexos)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Documentos internos e material de cliente (escopo, planejamento, catalogos)
+arquivos/
+
+# Ferramentas locais
+.vscode/
+.idea/
+
+# Logs e temporarios
+*.log
+npm-debug.log*
+yarn-error.log*
+.cache/
+.tmp/
+coverage/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini

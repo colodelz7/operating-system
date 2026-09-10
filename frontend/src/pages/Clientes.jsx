@@ -15,7 +15,7 @@ function CardCliente({ c, onAbrir }) {
         ? <img className="logo-cli" src={`/api/clientes/${c.id}/logo`} alt="" />
         : <div className="logo-cli">{iniciais(c.empresa)}</div>}
       <h4>{c.empresa}</h4>
-      <div className="nicho">{c.nicho || '—'}{c.tamanho ? ' · ' + c.tamanho : ''}</div>
+      <div className="nicho">{c.nicho || '-'}{c.tamanho ? ' · ' + c.tamanho : ''}</div>
       <div className="dados">
         {c.contato && <span>👤 {c.contato}</span>}
         {c.telefone && <span>📞 {c.telefone}</span>}

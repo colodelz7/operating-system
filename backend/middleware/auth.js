@@ -19,6 +19,11 @@ async function exigirLogin(req, res, next) {
       req.session.destroy(() => {});
       return res.status(401).json({ erro: 'Sessão inválida' });
     }
+    // Conta desativada perde o acesso na hora, mesmo com a sessao ja aberta.
+    if (usuario.ativo === false) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ erro: 'Conta desativada. Fale com o Atendimento.' });
+    }
     req.usuario = usuario; // fonte da verdade vinda do banco
     next();
   } catch (e) { next(e); }
@@ -32,10 +37,30 @@ function exigirAdmin(req, res, next) {
   next();
 }
 
+/**
+ * Quem pode cadastrar/editar cliente: admin, o setor Comercial e quem tiver a
+ * permissao marcada na tela de Usuarios. Antes disso a regra existia so no
+ * front, entao qualquer pessoa logada conseguia criar e editar cliente
+ * chamando a API direto.
+ */
+function podeGerirClientes(usuario) {
+  if (!usuario) return false;
+  if (usuario.papel === 'admin') return true;
+  if (usuario.setor_slug === 'comercial') return true;
+  return usuario.pode_clientes === true;
+}
+
+function exigirGestaoDeClientes(req, res, next) {
+  if (!podeGerirClientes(req.usuario)) {
+    return res.status(403).json({ erro: 'Sem permissão para cadastrar ou editar clientes' });
+  }
+  next();
+}
+
 // Admin acessa qualquer setor; membro so o proprio.
 function podeAcessarSetor(usuario, setorId) {
   if (usuario.papel === 'admin') return true;
   return usuario.setor_id === Number(setorId);
 }
 
-module.exports = { exigirLogin, exigirAdmin, podeAcessarSetor };
+module.exports = { exigirLogin, exigirAdmin, podeAcessarSetor, podeGerirClientes, exigirGestaoDeClientes };

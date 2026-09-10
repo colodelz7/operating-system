@@ -7,7 +7,7 @@ import { iniciais } from '../lib/format';
 
 /* ============================================================
    Gerenciamento de usuários (só admin/Atendimento).
-   Criar, editar, excluir; setor, permissão e — no Criativo —
+   Criar, editar, excluir; setor, permissão e, no Criativo,
    quais colunas (tipos de tarefa) o membro enxerga.
    ============================================================ */
 
@@ -23,6 +23,7 @@ function ModalUsuario({ usuario, setores, criativoId, onClose, onSalvo }) {
     setor_id: usuario?.setor_id || (setores[0]?.id ?? ''),
     papel: usuario?.papel || 'membro',
     pode_clientes: !!usuario?.pode_clientes,
+    ativo: usuario ? usuario.ativo !== false : true,
   }));
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -71,6 +72,8 @@ function ModalUsuario({ usuario, setores, criativoId, onClose, onSalvo }) {
       papel: form.papel,
       pode_clientes: !!form.pode_clientes,
     };
+    // so faz sentido ligar/desligar quem ja existe
+    if (ed) payload.ativo = !!form.ativo;
     if (form.senha) payload.senha = form.senha;
 
     if (ehCriativo) {
@@ -123,8 +126,8 @@ function ModalUsuario({ usuario, setores, criativoId, onClose, onSalvo }) {
               </select></div>
             <div className="campo"><label>Permissão</label>
               <select value={form.papel} onChange={(e) => set('papel', e.target.value)} disabled={souEu}>
-                <option value="membro">Membro — vê só o próprio setor</option>
-                <option value="admin">Admin — acesso total ao sistema</option>
+                <option value="membro">Membro: vê só o próprio setor</option>
+                <option value="admin">Admin: acesso total ao sistema</option>
               </select>
               <small style={{ color: 'var(--muted)', fontSize: 12 }}>
                 A permissão é independente do setor. Alguém do Atendimento pode ser apenas Membro.
@@ -143,6 +146,20 @@ function ModalUsuario({ usuario, setores, criativoId, onClose, onSalvo }) {
               Admins e o setor Comercial já podem por padrão. Marque para liberar a esta pessoa.
             </small>
           </div>
+
+          {ed && (
+            <div className="campo">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: souEu ? 'default' : 'pointer' }}>
+                <input type="checkbox" style={{ width: 'auto' }} disabled={souEu}
+                  checked={!!form.ativo} onChange={(e) => set('ativo', e.target.checked)} />
+                Conta ativa
+              </label>
+              <small style={{ color: 'var(--muted)', fontSize: 12 }}>
+                Desmarcar tira o acesso na hora, inclusive de quem já está logado, sem apagar
+                o histórico da pessoa.{souEu ? ' Você não pode desativar a própria conta.' : ''}
+              </small>
+            </div>
+          )}
 
           <div className="campo">
             <label>{ed ? 'Nova senha (em branco = manter a atual)' : 'Senha'}</label>
@@ -224,7 +241,7 @@ export default function Usuarios() {
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
 
-  const nomeSetor = (id) => (setores.find((s) => s.id === id) || {}).nome || '—';
+  const nomeSetor = (id) => (setores.find((s) => s.id === id) || {}).nome || '-';
   const resumoColunas = (u) => {
     if (u.setor_id !== criativoId) return null;
     if (!Array.isArray(u.colunas_visiveis) || !u.colunas_visiveis.length) return 'Vê todas as colunas';
@@ -249,7 +266,8 @@ export default function Usuarios() {
         {usuarios.map((u) => {
           const cols = resumoColunas(u);
           return (
-            <button key={u.id} style={linhaStyle} onClick={() => setModal({ aberto: true, usuario: u })}>
+            <button key={u.id} onClick={() => setModal({ aberto: true, usuario: u })}
+              style={u.ativo === false ? { ...linhaStyle, opacity: 0.55 } : linhaStyle}>
               <div className="avatar">{iniciais(u.nome)}</div>
               <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                 <b style={{ fontSize: 14 }}>{u.nome}</b>
@@ -262,6 +280,13 @@ export default function Usuarios() {
                   style={{ pointerEvents: 'none', fontSize: 12, padding: '4px 10px' }}>
                   {u.papel === 'admin' ? 'Admin' : 'Membro'}
                 </span>
+                {u.ativo === false && (
+                  <span className="chip" style={{
+                    pointerEvents: 'none', fontSize: 12, padding: '4px 10px',
+                    color: 'var(--st-atrasada)',
+                    borderColor: 'color-mix(in srgb, var(--st-atrasada) 45%, transparent)',
+                  }}>Inativo</span>
+                )}
               </div>
             </button>
           );

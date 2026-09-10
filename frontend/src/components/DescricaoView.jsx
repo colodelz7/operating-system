@@ -14,7 +14,7 @@ const RE_SEP = /^\s*\|?\s*:?-{2,}.*$/; // linha separadora de tabela
 
 // monta um <a> clicavel (abre em nova aba; nao propaga o clique pro card/modal).
 // Seguranca: so http/https/mailto viram link. Qualquer outro esquema
-// (javascript:, data:, vbscript:, etc) e neutralizado e vira texto puro — evita
+// (javascript:, data:, vbscript:, etc) e neutralizado e vira texto puro, evita
 // XSS por link malicioso plantado numa descricao (conteudo compartilhado).
 function link(url, texto, key) {
   const raw = String(url || '').trim();
@@ -41,7 +41,7 @@ function inline(str, key) {
       out.push(<em key={`${key}-${i++}`}>{m[7]}</em>);
     } else if (m[8] != null) {          // `código`
       out.push(<code key={`${key}-${i++}`}>{m[9]}</code>);
-    } else if (m[10] != null) {         // URL nua — tira pontuação final do link
+    } else if (m[10] != null) {         // URL nua, tira pontuação final do link
       let url = m[10];
       const t = url.match(/[.,;:!?)\]]+$/);
       const cauda = t ? t[0] : '';

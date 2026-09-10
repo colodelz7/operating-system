@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
+import AssistenteColodelBot from './components/AssistenteColodelBot';
 import { useApp } from './context/AppContext';
 import { useNotificacoes } from './context/NotificacoesContext';
 import { useTarefaModal } from './context/TarefaModalContext';
@@ -53,6 +54,8 @@ export default function App() {
       <div className={`sidebar-overlay ${sidebarAberta ? 'show' : ''}`} onClick={() => setSidebarAberta(false)} />
 
       <NotifPanel aberto={sinoAberto} onFechar={() => setSinoAberto(false)} />
+
+      <AssistenteColodelBot />
     </>
   );
 }

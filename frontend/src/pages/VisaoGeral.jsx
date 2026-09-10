@@ -183,7 +183,7 @@ export default function VisaoGeral() {
                 <div key={t.id} className="vg-setor-card clicavel" style={{ borderLeftColor: s.cor }} onClick={() => abrirDetalhe(t.id)}>
                   <h4>{t.titulo}</h4>
                   <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>{s.nome}{t.cliente_nome ? ' · ' + t.cliente_nome : ''}</div>
-                  <div style={{ fontSize: 12, color: 'var(--st-atrasada)', fontWeight: 600, marginTop: 6 }}>Entrega: {t.data_entrega ? formatarData(t.data_entrega) : '—'}</div>
+                  <div style={{ fontSize: 12, color: 'var(--st-atrasada)', fontWeight: 600, marginTop: 6 }}>Entrega: {t.data_entrega ? formatarData(t.data_entrega) : '-'}</div>
                 </div>
               );
             })}

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+
+# Variaveis do Vite (VITE_* vao para o bundle publico; o arquivo fica local)
+.env
+.env.*
+!.env.example
+
+*.log

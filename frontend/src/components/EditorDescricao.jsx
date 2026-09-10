@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 
 /* Editor de descrição estilo Notion (leve): textarea + barra de blocos +
    menu "/" para inserir lista de tarefas, lista, numerada, tabela, título e
-   frase de destaque. Guarda markdown simples em texto — o DescricaoView
+   frase de destaque. Guarda markdown simples em texto, o DescricaoView
    renderiza. Enter continua listas automaticamente. */
 
 const BLOCOS = [
@@ -28,7 +28,7 @@ function inlineMd(node) {
     else if (tag === 'code') s += `\`${inner}\``;
     else if (tag === 'a') {
       // so gera link pra esquemas seguros (http/https/mailto/www); qualquer
-      // outro (javascript:, data:...) vira texto puro — anti-XSS ao colar
+      // outro (javascript:, data:...) vira texto puro, anti-XSS ao colar
       const href = (ch.getAttribute('href') || '').trim();
       const seguro = /^(https?:|mailto:)/i.test(href) || /^www\./i.test(href);
       s += seguro ? `[${inner}](${href})` : inner;

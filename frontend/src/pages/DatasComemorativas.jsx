@@ -96,7 +96,7 @@ export default function DatasComemorativas() {
 
       {proximas.length > 0 && (
         <div className="dc-proximas">
-          <div className="dc-sub">Próximas datas {cliente ? `— ${cliente}` : ''}</div>
+          <div className="dc-sub">Próximas datas {cliente ? `· ${cliente}` : ''}</div>
           <div className="dc-chips">
             {proximas.map((e) => (
               <div key={`${e.mes}-${e.dia}-${e.nome}`} className={`dc-chip ${e.campanha ? 'alta' : ''}`}>

@@ -28,6 +28,7 @@ export default function TarefaModal({ setorId, tarefa, onClose, onSaved }) {
   const [usuarios, setUsuarios] = useState([]);
   const [respSel, setRespSel] = useState(new Set((tarefa?.responsaveis || []).map((r) => r.id)));
   const [salvando, setSalvando] = useState(false);
+  const [duplicando, setDuplicando] = useState(false);
   const anexoRef = useRef(null);
 
   const [form, setForm] = useState({
@@ -42,6 +43,21 @@ export default function TarefaModal({ setorId, tarefa, onClose, onSaved }) {
     recorrencia: tarefa?.recorrencia || '',
   });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // Duplicar: cria uma tarefa nova com o mesmo conteudo, no inicio do fluxo.
+  // Nao leva anexos, comentarios nem recorrencia, e uma tarefa nova, nao uma
+  // continuacao da atual.
+  async function duplicar() {
+    if (!ed || duplicando) return;
+    setDuplicando(true);
+    try {
+      const r = await API.post(`/api/tarefas/${tarefa.id}/duplicar`, {});
+      toast(`Cópia criada: "${r.tarefa.titulo}" ✓`, 'ok');
+      onSaved?.();
+      onClose();
+    } catch (e) { toast(e.message, 'erro'); }
+    finally { setDuplicando(false); }
+  }
 
   // Recarrega colunas e responsáveis sempre que o setor do formulário muda.
   useEffect(() => {
@@ -133,7 +149,7 @@ export default function TarefaModal({ setorId, tarefa, onClose, onSaved }) {
             <>
               <div className="campo">
                 <label>Título</label>
-                <input value={form.titulo} onChange={(e) => set('titulo', e.target.value)} placeholder="Ex: Cliente Exemplo — 2 estáticos" />
+                <input value={form.titulo} onChange={(e) => set('titulo', e.target.value)} placeholder="Ex: Cliente Exemplo, 2 estáticos" />
               </div>
               <div className="campo">
                 <label>Descrição</label>
@@ -143,7 +159,7 @@ export default function TarefaModal({ setorId, tarefa, onClose, onSaved }) {
                 <div className="campo">
                   <label>Cliente (opcional)</label>
                   <select value={form.cliente_id} onChange={(e) => set('cliente_id', e.target.value)}>
-                    <option value="">— Sem cliente —</option>
+                    <option value="">Sem cliente</option>
                     {clientes.map((c) => <option key={c.id} value={c.id}>{c.empresa}</option>)}
                   </select>
                 </div>
@@ -204,6 +220,12 @@ export default function TarefaModal({ setorId, tarefa, onClose, onSaved }) {
         </div>
         <div className="modal-rodape">
           {ed && ehAdmin && <button className="btn btn-perigo" onClick={excluir}>Excluir</button>}
+          {ed && (
+            <button className="btn btn-ghost" onClick={duplicar} disabled={duplicando || salvando}
+              title="Cria uma cópia desta tarefa no início do fluxo">
+              {duplicando ? 'Duplicando...' : 'Duplicar'}
+            </button>
+          )}
           <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={salvar} disabled={salvando || carregando}>{ed ? 'Salvar alterações' : 'Criar tarefa'}</button>
         </div>

@@ -3,8 +3,11 @@
 const express = require('express');
 const repo = require('../data');
 const { exigirLogin, podeAcessarSetor } = require('../middleware/auth');
+const { comIdValidado } = require('../middleware/params');
 
 const router = express.Router();
+// :id sempre numerico (nunca chega NaN no banco)
+comIdValidado(router);
 
 // GET /api/setores
 // Admin -> todos os setores. Membro -> apenas o seu.

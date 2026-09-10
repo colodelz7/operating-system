@@ -1,15 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { API } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { formatarDataLonga, formatarDuracao } from '../lib/format';
+import { formatarDataLonga, formatarDuracao, formatarQuando } from '../lib/format';
 import DescricaoView from './DescricaoView';
+import Anexos from './Anexos';
+import Comentarios from './Comentarios';
 
-/* Modal de detalhe da tarefa. Portado do ViewKanban.abrirDetalhe.
-   O Status é editável aqui: mover a tarefa de coluna (Pendente, Em andamento,
-   Concluído...) por qualquer tela — inclusive o Calendário. Usa o mesmo
-   PATCH /mover do Kanban, então cronômetro, conclusão, notificação e
-   arquivamento seguem a lógica de sempre. */
+/* Modal de detalhe da tarefa.
+   O Status é editável aqui: mover a tarefa de coluna por qualquer tela,
+   inclusive o Calendário. Usa o mesmo PATCH /mover do Kanban, então
+   cronômetro, conclusão, notificação e recorrência seguem a lógica de
+   sempre. */
+
+const ROTULO_RECORRENCIA = {
+  diaria: 'todo dia',
+  semanal: 'toda semana',
+  quinzenal: 'a cada 15 dias',
+  mensal: 'todo mês',
+};
+
 export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
   const { ehAdmin } = useAuth();
   const toast = useToast();
@@ -17,21 +27,18 @@ export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
   const [colunas, setColunas] = useState([]);
   const [movendo, setMovendo] = useState(false);
 
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
+  const carregar = useCallback(async () => {
+    try {
+      const r = await API.get(`/api/tarefas/${id}`);
+      setT(r.tarefa);
       try {
-        const r = await API.get(`/api/tarefas/${id}`);
-        if (!vivo) return;
-        setT(r.tarefa);
-        try {
-          const rc = await API.get(`/api/setores/${r.tarefa.setor_id}/colunas`);
-          if (vivo) setColunas(rc.colunas || []);
-        } catch { /* sem acesso às colunas: status vira somente leitura */ }
-      } catch (e) { toast(e.message, 'erro'); onClose(); }
-    })();
-    return () => { vivo = false; };
+        const rc = await API.get(`/api/setores/${r.tarefa.setor_id}/colunas`);
+        setColunas(rc.colunas || []);
+      } catch { /* sem acesso às colunas: status vira somente leitura */ }
+    } catch (e) { toast(e.message, 'erro'); onClose(); }
   }, [id, toast, onClose]);
+
+  useEffect(() => { carregar(); }, [carregar]);
 
   async function mudarStatus(colunaId) {
     if (!t || Number(colunaId) === t.coluna_id) return;
@@ -39,7 +46,12 @@ export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
     try {
       const r = await API.patch(`/api/tarefas/${t.id}/mover`, { coluna_id: Number(colunaId) });
       setT(r.tarefa || { ...t, coluna_id: Number(colunaId) });
-      toast('Status atualizado ✓', 'ok');
+      // tarefa recorrente concluída: o servidor já criou a próxima
+      if (r.recorrente) {
+        toast(`Concluída ✓ Próxima ocorrência criada para ${r.recorrente.data_entrega}`, 'ok');
+      } else {
+        toast('Status atualizado ✓', 'ok');
+      }
       onMudou?.();
     } catch (e) { toast(e.message, 'erro'); }
     finally { setMovendo(false); }
@@ -99,12 +111,17 @@ export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
             </div>
             <div className="modal-corpo">
               {t.atrasada && <span className="tag-atraso">Atrasado</span>}
+              {t.recorrencia && (
+                <span className="tag-recorrente" title={`Repete ${ROTULO_RECORRENCIA[t.recorrencia]}`}>
+                  ↻ {ROTULO_RECORRENCIA[t.recorrencia] || t.recorrencia}
+                </span>
+              )}
               <div style={{ margin: '10px 0 16px' }}>
                 <DescricaoView texto={t.descricao} onToggle={toggleItem} />
               </div>
               <Linha rot="Status">
                 {(t.coluna_conclusao && !ehAdmin) ? (
-                  <span title="Concluída — travada (só admin reabre)">{t.coluna_nome} 🔒</span>
+                  <span title="Concluída, travada (só admin reabre)">{t.coluna_nome} 🔒</span>
                 ) : opcoesStatus.length ? (
                   <select value={t.coluna_id} disabled={movendo}
                     onChange={(e) => mudarStatus(e.target.value)}
@@ -115,8 +132,15 @@ export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
                 ) : t.coluna_nome}
               </Linha>
               <Linha rot="Prioridade">{t.prioridade[0].toUpperCase() + t.prioridade.slice(1)}</Linha>
-              <Linha rot="Início">{t.data_inicio ? formatarDataLonga(t.data_inicio) : '—'}</Linha>
-              <Linha rot="Entrega">{t.data_entrega ? formatarDataLonga(t.data_entrega) : '—'}</Linha>
+              <Linha rot="Início">{t.data_inicio ? formatarDataLonga(t.data_inicio) : '-'}</Linha>
+              <Linha rot="Entrega">{t.data_entrega ? formatarDataLonga(t.data_entrega) : '-'}</Linha>
+              {t.recorrencia ? (
+                <Linha rot="Repetição">
+                  {ROTULO_RECORRENCIA[t.recorrencia] || t.recorrencia}
+                  {t.recorrencia_ate ? ` (até ${formatarDataLonga(t.recorrencia_ate)})` : ''}
+                  {t.recorrencia_gerou_id > 0 ? ' · próxima já criada' : ''}
+                </Linha>
+              ) : null}
               <Linha rot="Tempo corrido">{formatarDuracao(t.tempo_ms)}</Linha>
               {temRetrab ? (
                 <Linha rot="Retrabalho">Design {t.retrabalho_design || 0} · Edição {t.retrabalho_edicao || 0} · PDF {t.retrabalho_pdf || 0}</Linha>
@@ -125,15 +149,13 @@ export default function TarefaDetalheModal({ id, onClose, onEditar, onMudou }) {
                 <label style={{ fontSize: 12, fontWeight: 600 }}>Responsáveis</label>
                 <div className="chips" style={{ marginTop: 6 }}>
                   {t.responsaveis.length ? t.responsaveis.map((r) => <span key={r.id} className="chip on">{r.nome}</span>)
-                    : <span style={{ color: 'var(--muted)' }}>—</span>}
+                    : <span style={{ color: 'var(--muted)' }}>-</span>}
                 </div>
               </div>
-              <div style={{ marginTop: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 600 }}>Anexos</label>
-                {(t.anexos || []).length ? t.anexos.map((a) => (
-                  <a key={a.id} className="tag-anexo" href={`/api/anexos/${a.id}`} style={{ display: 'block', marginTop: 6 }} target="_blank" rel="noreferrer">📎 {a.nome_original}</a>
-                )) : <span style={{ color: 'var(--muted)', fontSize: 13 }}> Nenhum anexo</span>}
-              </div>
+
+              <Anexos anexos={t.anexos || []} />
+
+              <Comentarios tarefaId={t.id} onMudou={onMudou} formatarQuando={formatarQuando} />
             </div>
             <div className="modal-rodape">
               <button className="btn btn-ghost" onClick={onClose}>Fechar</button>

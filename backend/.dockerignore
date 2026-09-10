@@ -1,0 +1,10 @@
+node_modules
+uploads/*
+!uploads/.gitkeep
+.env
+.env.*
+!.env.example
+test
+*.log
+Dockerfile
+.dockerignore

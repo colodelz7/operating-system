@@ -1,0 +1,19 @@
+# Normaliza quebra de linha: no repositorio tudo fica com LF, independente de
+# quem commitou de qual sistema. Sem isto o Git avisa "LF will be replaced by
+# CRLF" a cada arquivo tocado no Windows, e o diff enche de ruido.
+* text=auto eol=lf
+
+# Arquivos que precisam de CRLF de verdade no Windows
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binarios: nunca converter
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.pdf  binary
+*.zip  binary
+*.woff  binary
+*.woff2 binary

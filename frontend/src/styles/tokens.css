@@ -30,7 +30,7 @@
 }
 
 /* ============================================================
-   TEMA ESCURO — padrao (paleta do Sistema Comercial)
+   TEMA ESCURO: padrao (paleta do Sistema Comercial)
    ============================================================ */
 :root,
 [data-theme="dark"] {
@@ -90,7 +90,7 @@
 }
 
 /* ============================================================
-   TEMA CLARO — identidade Colodel (Manual da Marca 2026)
+   TEMA CLARO: identidade Colodel (Manual da Marca 2026)
    ============================================================ */
 [data-theme="light"] {
   color-scheme: light;

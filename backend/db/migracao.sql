@@ -13,7 +13,7 @@
 --   4. Adiciona andamento_inicio e contadores de retrabalho em tarefas
 --      (cronometro, retrabalho % e arquivamento no Postgres).
 --
---  Instalacoes NOVAS ja vem com tudo pelo db/schema.sql — nao precisam
+--  Instalacoes NOVAS ja vem com tudo pelo db/schema.sql, nao precisam
 --  desta migracao.
 -- ------------------------------------------------------------
 
@@ -53,5 +53,44 @@ ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS andamento_inicio  TIMESTAMPTZ;
 ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS retrabalho_design INT NOT NULL DEFAULT 0;
 ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS retrabalho_edicao INT NOT NULL DEFAULT 0;
 ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS retrabalho_pdf    INT NOT NULL DEFAULT 0;
+
+-- 5) trilha de auditoria: novas colunas do historico -----------------
+--    (entidade/entidade_id, IP e navegador; eventos de login/logout)
+ALTER TABLE historico ADD COLUMN IF NOT EXISTS entidade    TEXT NOT NULL DEFAULT 'tarefa';
+ALTER TABLE historico ADD COLUMN IF NOT EXISTS entidade_id INT;
+ALTER TABLE historico ADD COLUMN IF NOT EXISTS ip          TEXT DEFAULT '';
+ALTER TABLE historico ADD COLUMN IF NOT EXISTS user_agent  TEXT DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_historico_criado   ON historico(criado_em DESC);
+CREATE INDEX IF NOT EXISTS idx_historico_entidade ON historico(entidade);
+CREATE INDEX IF NOT EXISTS idx_historico_usuario  ON historico(usuario_id);
+
+-- 6) usuarios: desativacao e permissao de clientes -------------------
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS ativo         BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS pode_clientes BOOLEAN NOT NULL DEFAULT false;
+
+-- 7) bloqueio de login persistente ----------------------------------
+CREATE TABLE IF NOT EXISTS login_bloqueio (
+  chave  TEXT PRIMARY KEY,
+  falhas INT NOT NULL DEFAULT 0,
+  ate    TIMESTAMPTZ,
+  visto  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_login_bloqueio_visto ON login_bloqueio(visto);
+
+-- 8) tarefas recorrentes + comentarios --------------------------------
+ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS recorrencia           TEXT;
+ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS recorrencia_ate       DATE;
+ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS recorrencia_origem_id INT;
+ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS recorrencia_gerou_id  INT;
+CREATE INDEX IF NOT EXISTS idx_tarefas_recorrencia ON tarefas(recorrencia) WHERE recorrencia IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS comentarios (
+  id         SERIAL PRIMARY KEY,
+  tarefa_id  INT NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+  usuario_id INT NOT NULL REFERENCES usuarios(id),
+  texto      TEXT NOT NULL,
+  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_comentarios_tarefa ON comentarios(tarefa_id);
 
 COMMIT;

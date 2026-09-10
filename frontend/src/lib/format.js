@@ -19,7 +19,7 @@ export function formatarDataLonga(iso) {
 
 // duracao legivel a partir de milissegundos (ex.: "2d 4h", "3h 12min", "8min")
 export function formatarDuracao(ms) {
-  if (!ms || ms <= 0) return '—';
+  if (!ms || ms <= 0) return '-';
   const min = Math.floor(ms / 60000);
   const dias = Math.floor(min / 1440);
   const horas = Math.floor((min % 1440) / 60);

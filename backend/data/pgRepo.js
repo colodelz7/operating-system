@@ -7,8 +7,15 @@
  * Antes de usar: rode db/schema.sql e db/seed.sql no seu banco.
  */
 
-const { Pool } = require('pg');
+const pg = require('pg');
+const { Pool } = pg;
 const config = require('../config');
+
+// Colunas DATE (oid 1082) chegam como texto 'AAAA-MM-DD', do mesmo jeito que
+// o repositorio em memoria devolve. Sem isto o driver monta um Date e o JSON
+// vira '2026-09-07T00:00:00.000Z', que ja tem fuso e nao entra num
+// <input type="date">. Datas de calendario nao tem hora nem fuso.
+pg.types.setTypeParser(1082, (valor) => valor);
 
 const pool = new Pool({ connectionString: config.databaseUrl });
 
@@ -69,6 +76,7 @@ const TAREFA_SELECT = `
   SELECT t.*,
          col.nome  AS coluna_nome,
          col.e_conclusao AS coluna_conclusao,
+         setr.nome AS setor_nome,
          cli.empresa AS cliente_nome,
          COALESCE(
            (SELECT json_agg(json_build_object('id', u.id, 'nome', u.nome, 'usuario', u.usuario))
@@ -84,11 +92,13 @@ const TAREFA_SELECT = `
            AND t.data_entrega IS NOT NULL AND t.data_entrega < CURRENT_DATE) AS atrasada,
          (t.concluida_em IS NOT NULL
            AND t.concluida_em < now() - INTERVAL '7 days') AS arquivada,
+         (SELECT count(*)::int FROM comentarios cm WHERE cm.tarefa_id = t.id) AS comentarios,
          CASE WHEN t.andamento_inicio IS NULL THEN 0
               ELSE (EXTRACT(EPOCH FROM (COALESCE(t.concluida_em, now()) - t.andamento_inicio)) * 1000)::double precision
          END AS tempo_ms
     FROM tarefas t
     JOIN colunas_status col ON col.id = t.coluna_id
+    JOIN setores setr ON setr.id = t.setor_id
     LEFT JOIN clientes cli ON cli.id = t.cliente_id
 `;
 
@@ -121,21 +131,21 @@ module.exports = {
   },
   async buscarUsuarioPorId(id) {
     const r = await q(
-      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id,
+      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
               s.slug AS setor_slug, s.nome AS setor_nome
          FROM usuarios u JOIN setores s ON s.id = u.setor_id
         WHERE u.id = $1`, [id]);
     return r.rows[0] || null;
   },
   async listarUsuariosDoSetor(setorId) {
-    const r = await q('SELECT id, nome, usuario FROM usuarios WHERE setor_id = $1 ORDER BY nome', [setorId]);
+    const r = await q('SELECT id, nome, usuario FROM usuarios WHERE setor_id = $1 AND ativo ORDER BY nome', [setorId]);
     return r.rows;
   },
 
   // ---- gerenciamento (admin) ----
   async buscarUsuarioPublico(id) {
     const r = await q(
-      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id,
+      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
               s.slug AS setor_slug, s.nome AS setor_nome,
               COALESCE((SELECT json_agg(uc.coluna_id)
                           FROM usuario_colunas uc WHERE uc.usuario_id = u.id), '[]') AS colunas_visiveis
@@ -148,7 +158,7 @@ module.exports = {
   },
   async listarUsuarios() {
     const r = await q(
-      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id,
+      `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
               s.slug AS setor_slug, s.nome AS setor_nome,
               COALESCE((SELECT json_agg(uc.coluna_id)
                           FROM usuario_colunas uc WHERE uc.usuario_id = u.id), '[]') AS colunas_visiveis
@@ -160,20 +170,21 @@ module.exports = {
     }));
   },
   async contarAdmins() {
-    const r = await q("SELECT count(*)::int AS n FROM usuarios WHERE papel = 'admin'");
+    const r = await q("SELECT count(*)::int AS n FROM usuarios WHERE papel = 'admin' AND ativo");
     return r.rows[0].n;
   },
   async criarUsuario(d) {
     const r = await q(
-      `INSERT INTO usuarios (nome, usuario, senha_hash, setor_id, papel)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [d.nome, d.usuario, d.senha_hash, d.setor_id, d.papel]);
+      `INSERT INTO usuarios (nome, usuario, senha_hash, setor_id, papel, ativo, pode_clientes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [d.nome, d.usuario, d.senha_hash, d.setor_id, d.papel,
+       d.ativo !== false, !!d.pode_clientes]);
     const id = r.rows[0].id;
     await setColunasVisiveis(id, d.colunas_visiveis);
     return this.buscarUsuarioPublico(id);
   },
   async atualizarUsuario(id, d) {
-    const cols = ['nome', 'usuario', 'senha_hash', 'setor_id', 'papel'];
+    const cols = ['nome', 'usuario', 'senha_hash', 'setor_id', 'papel', 'ativo', 'pode_clientes'];
     const presentes = cols.filter((c) => c in d && !(c === 'senha_hash' && !d[c]));
     if (presentes.length) {
       const set = presentes.map((c, i) => `${c} = $${i + 1}`).join(',');
@@ -280,21 +291,27 @@ module.exports = {
       const rt = ehRetrabalho(col.nome);
       if (rt) retr[rt] = 1;
     }
+    // nasceu direto numa coluna de conclusao: ja entra concluida (mesma regra
+    // do repositorio em memoria)
+    const concluidaEm = col.e_conclusao ? new Date() : null;
     const r = await q(
       `INSERT INTO tarefas (titulo, descricao, setor_id, coluna_id, cliente_id, prioridade,
                             data_inicio, data_entrega, data_publicacao, criado_por,
-                            andamento_inicio, retrabalho_design, retrabalho_edicao, retrabalho_pdf)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+                            andamento_inicio, concluida_em, retrabalho_design, retrabalho_edicao, retrabalho_pdf,
+                            recorrencia, recorrencia_ate, recorrencia_origem_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
       [d.titulo, d.descricao || '', d.setor_id, d.coluna_id, d.cliente_id || null,
        d.prioridade || 'normal', d.data_inicio || null, d.data_entrega || null,
        d.data_publicacao || null, d.criado_por,
-       andamentoInicio, retr.design, retr.edicao, retr.pdf]);
+       andamentoInicio, concluidaEm, retr.design, retr.edicao, retr.pdf,
+       d.recorrencia || null, d.recorrencia_ate || null, d.recorrencia_origem_id || null]);
     const id = r.rows[0].id;
     await setResponsaveis(id, d.responsaveis);
     return this.buscarTarefa(id);
   },
   async atualizarTarefa(id, d) {
-    const cols = ['titulo','descricao','cliente_id','prioridade','data_inicio','data_entrega','data_publicacao'];
+    const cols = ['titulo','descricao','cliente_id','prioridade','data_inicio','data_entrega','data_publicacao',
+                  'recorrencia','recorrencia_ate'];
     const presentes = cols.filter((c) => c in d);
     if (presentes.length) {
       const set = presentes.map((c, i) => `${c} = $${i + 1}`).join(',');
@@ -342,6 +359,81 @@ module.exports = {
     return r.rowCount > 0;
   },
 
+  // ---------------- BLOQUEIO DE LOGIN ----------------
+  // No Postgres o bloqueio sobrevive a restart e vale para todas as
+  // instancias da API (em memoria, cada processo tinha a sua contagem).
+  async lerBloqueio(chave) {
+    const r = await q('SELECT falhas, ate, visto FROM login_bloqueio WHERE chave = $1', [chave]);
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      falhas: row.falhas,
+      ate: row.ate ? new Date(row.ate).getTime() : null,
+      visto: new Date(row.visto).getTime(),
+    };
+  },
+  async salvarBloqueio(chave, dados) {
+    await q(
+      `INSERT INTO login_bloqueio (chave, falhas, ate, visto)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (chave) DO UPDATE SET falhas = $2, ate = $3, visto = $4`,
+      [chave, dados.falhas, dados.ate ? new Date(dados.ate) : null,
+       new Date(dados.visto || Date.now())]);
+    return true;
+  },
+  async limparBloqueios(chaves) {
+    if (!chaves || !chaves.length) return true;
+    await q('DELETE FROM login_bloqueio WHERE chave = ANY($1)', [chaves]);
+    return true;
+  },
+  async limparBloqueiosVelhos(antesDe) {
+    await q('DELETE FROM login_bloqueio WHERE (ate IS NOT NULL AND ate <= now()) OR (ate IS NULL AND visto < $1)',
+      [new Date(antesDe)]);
+    return true;
+  },
+
+  // ---------------- COMENTARIOS ----------------
+  async listarComentarios(tarefaId) {
+    const r = await q(
+      `SELECT c.id, c.tarefa_id, c.usuario_id, c.texto, c.criado_em,
+              COALESCE(u.nome, 'Usuário removido') AS usuario_nome
+         FROM comentarios c LEFT JOIN usuarios u ON u.id = c.usuario_id
+        WHERE c.tarefa_id = $1
+        ORDER BY c.id`, [tarefaId]);
+    return r.rows;
+  },
+  async criarComentario(d) {
+    const r = await q(
+      'INSERT INTO comentarios (tarefa_id, usuario_id, texto) VALUES ($1,$2,$3) RETURNING id',
+      [d.tarefa_id, d.usuario_id, d.texto]);
+    const rr = await q(
+      `SELECT c.id, c.tarefa_id, c.usuario_id, c.texto, c.criado_em, u.nome AS usuario_nome
+         FROM comentarios c JOIN usuarios u ON u.id = c.usuario_id
+        WHERE c.id = $1`, [r.rows[0].id]);
+    return rr.rows[0];
+  },
+  async buscarComentario(id) {
+    const r = await q('SELECT * FROM comentarios WHERE id = $1', [id]);
+    return r.rows[0] || null;
+  },
+  async excluirComentario(id) {
+    const r = await q('DELETE FROM comentarios WHERE id = $1', [id]);
+    return r.rowCount > 0;
+  },
+
+  // ---------------- RECORRENCIA ----------------
+  // Cabeca da serie = tem frequencia definida e ainda nao gerou a proxima.
+  async listarTarefasRecorrentesPendentes() {
+    const r = await q(`${TAREFA_SELECT}
+      WHERE t.recorrencia IS NOT NULL AND t.recorrencia_gerou_id IS NULL
+      ORDER BY t.id`);
+    return r.rows;
+  },
+  async marcarRecorrenciaGerada(id, novaId) {
+    const r = await q('UPDATE tarefas SET recorrencia_gerou_id = $1 WHERE id = $2', [novaId, id]);
+    return r.rowCount > 0;
+  },
+
   // ---------------- ANEXOS ----------------
   async criarAnexo(d) {
     const r = await q(
@@ -355,25 +447,66 @@ module.exports = {
     return r.rows[0] || null;
   },
 
-  // ---------------- HISTORICO ----------------
+  // ---------------- HISTORICO (trilha de auditoria) ----------------
   async registrarHistorico(d) {
     const r = await q(
-      `INSERT INTO historico (tipo, tarefa_id, titulo, setor_id, usuario_id, usuario_nome,
-                              detalhe, cliente_id, cliente_nome, responsaveis)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [d.tipo, d.tarefa_id || null, d.titulo || '', d.setor_id || null,
+      `INSERT INTO historico (tipo, entidade, entidade_id, tarefa_id, titulo, setor_id,
+                              usuario_id, usuario_nome, detalhe, cliente_id, cliente_nome,
+                              responsaveis, ip, user_agent)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [d.tipo, d.entidade || 'tarefa', d.entidade_id != null ? d.entidade_id : (d.tarefa_id || null),
+       d.tarefa_id || null, d.titulo || '', d.setor_id || null,
        d.usuario_id || null, d.usuario_nome || '', d.detalhe || '',
        d.cliente_id || null, d.cliente_nome || '',
-       JSON.stringify(Array.isArray(d.responsaveis) ? d.responsaveis : [])]);
+       JSON.stringify(Array.isArray(d.responsaveis) ? d.responsaveis : []),
+       d.ip || '', d.user_agent || '']);
     return r.rows[0];
   },
-  async listarHistorico({ limit = 300, setorId = null } = {}) {
-    if (setorId != null) {
-      const r = await q('SELECT * FROM historico WHERE setor_id = $1 ORDER BY id DESC LIMIT $2', [setorId, limit]);
-      return r.rows;
+  // Mesmos filtros do memoryRepo (paridade): setorId, entidade, tipo,
+  // usuarioId, de/ate (YYYY-MM-DD), q (busca livre) e limit.
+  async listarHistorico(filtros = {}) {
+    const { limit = 300, setorId = null, entidade = null, tipo = null,
+            usuarioId = null, de = null, ate = null, q: busca = null, antesDe = null } = filtros;
+    const cond = [];
+    const params = [];
+    const add = (sql, valor) => { params.push(valor); cond.push(sql.replace('$?', '$' + params.length)); };
+
+    if (antesDe != null)  add('id < $?', Number(antesDe)); // cursor da pagina seguinte
+    if (setorId != null)  add('setor_id = $?', Number(setorId));
+    if (entidade)         add('entidade = $?', entidade);
+    if (tipo)             add('tipo = $?', tipo);
+    if (usuarioId != null) add('usuario_id = $?', Number(usuarioId));
+    if (de)               add('criado_em >= $?::date', de);
+    if (ate)              add('criado_em < ($?::date + 1)', ate);
+    if (busca) {
+      params.push('%' + String(busca).toLowerCase() + '%');
+      const i = '$' + params.length;
+      cond.push(`(lower(titulo) LIKE ${i} OR lower(usuario_nome) LIKE ${i}
+                  OR lower(cliente_nome) LIKE ${i} OR lower(detalhe) LIKE ${i}
+                  OR lower(ip) LIKE ${i})`);
     }
-    const r = await q('SELECT * FROM historico ORDER BY id DESC LIMIT $1', [limit]);
+    const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+    params.push(Math.min(Number(limit) || 300, 2000));
+    // atencao: LIMIT usa placeholder ($N), nunca o numero interpolado direto
+    const r = await q(`SELECT * FROM historico ${where} ORDER BY id DESC LIMIT $${params.length}`, params);
     return r.rows;
+  },
+  // Valores distintos para montar os seletores da tela sem depender da
+  // pagina carregada.
+  async opcoesHistorico() {
+    const r = await q(`
+      SELECT
+        (SELECT COALESCE(json_agg(DISTINCT usuario_nome ORDER BY usuario_nome), '[]')
+           FROM historico WHERE usuario_nome <> '') AS pessoas,
+        (SELECT COALESCE(json_agg(DISTINCT cliente_nome ORDER BY cliente_nome), '[]')
+           FROM historico WHERE cliente_nome <> '') AS clientes,
+        (SELECT COALESCE(json_agg(DISTINCT setor_id ORDER BY setor_id), '[]')
+           FROM historico WHERE setor_id IS NOT NULL) AS setores,
+        (SELECT COALESCE(json_agg(DISTINCT entidade ORDER BY entidade), '[]') FROM historico) AS entidades,
+        (SELECT COALESCE(json_agg(DISTINCT tipo ORDER BY tipo), '[]') FROM historico) AS tipos,
+        (SELECT count(*)::int FROM historico) AS total
+    `);
+    return r.rows[0];
   },
 
   // ---------------- NOTIFICACOES ----------------

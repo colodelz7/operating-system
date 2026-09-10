@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -11,6 +11,9 @@ export default function Login() {
   const [erro, setErro] = useState('');
   const [erroTipo, setErroTipo] = useState('erro'); // 'erro' | 'aviso' (bloqueio)
   const [enviando, setEnviando] = useState(false);
+  // Bloqueio por tentativas: o servidor manda quantos segundos faltam e a
+  // tela mostra o cronometro regressivo, sem deixar tentar de novo antes.
+  const [restante, setRestante] = useState(0);
   // Anti-autofill: os campos nascem readOnly para o Chrome NAO preencher
   // sozinho as credenciais salvas/sincronizadas (conta Google compartilhada).
   // Ao clicar/focar, liberamos para digitar. Evita "abrir o URL e entrar como
@@ -22,15 +25,30 @@ export default function Login() {
   // de bolinhas via CSS (-webkit-text-security), assim o gerenciador de senhas
   // NAO reconhece o campo como senha e para de sugerir/salvar. O olhinho ainda
   // alterna mostrar/ocultar. Sem suporte a mascara (Firefox/Safari), cai no
-  // type="password" normal — mas o vazamento por conta compartilhada e do Chrome.
+  // type="password" normal, mas o vazamento por conta compartilhada e do Chrome.
   const suportaMascara = typeof CSS !== 'undefined' && CSS.supports && CSS.supports('-webkit-text-security', 'disc');
   const tipoSenha = suportaMascara ? 'text' : (verSenha ? 'text' : 'password');
   const classeSenha = suportaMascara && !verSenha ? 'senha-mascarada' : '';
+
+  // conta o tempo de bloqueio de volta ate zerar
+  useEffect(() => {
+    if (restante <= 0) return undefined;
+    const id = setTimeout(() => setRestante((s) => (s <= 1 ? 0 : s - 1)), 1000);
+    return () => clearTimeout(id);
+  }, [restante]);
+
+  useEffect(() => {
+    if (restante === 0 && erroTipo === 'aviso') setErro('');
+  }, [restante, erroTipo]);
+
+  const mmss = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const travado = restante > 0;
 
   if (!carregando && usuario) return <Navigate to="/" replace />;
 
   const enviar = async (e) => {
     e.preventDefault();
+    if (travado) return;
     setErro('');
     setEnviando(true);
     try {
@@ -40,6 +58,8 @@ export default function Login() {
       setErro(err.message || 'Não foi possível entrar');
       // 429 = bloqueio por tentativas / limite -> mostra como aviso, nao erro
       setErroTipo(err.status === 429 ? 'aviso' : 'erro');
+      const segundos = err.dados && Number(err.dados.segundos_restantes);
+      if (err.status === 429 && segundos > 0) { setRestante(segundos); setSenha(''); }
       setEnviando(false);
     }
   };
@@ -53,8 +73,13 @@ export default function Login() {
         <div className="login-eyebrow">Sistema Operacional interno</div>
 
         {erro && (
-          <div className={erroTipo === 'aviso' ? 'form-aviso' : 'form-erro'} style={{ display: 'block' }}>
+          <div className={erroTipo === 'aviso' ? 'form-aviso' : 'form-erro'} style={{ display: 'block' }} role="alert">
             {erroTipo === 'aviso' ? '🔒 ' : ''}{erro}
+            {travado && (
+              <div className="login-contador" aria-live="polite">
+                Liberado em <b>{mmss(restante)}</b>
+              </div>
+            )}
           </div>
         )}
 
@@ -90,7 +115,9 @@ export default function Login() {
               </button>
             </div>
           </div>
-          <button type="submit" className="btn btn-primary btn-block" disabled={enviando}>{enviando ? 'Entrando...' : 'Entrar'}</button>
+          <button type="submit" className="btn btn-primary btn-block" disabled={enviando || travado}>
+            {travado ? `Bloqueado (${mmss(restante)})` : (enviando ? 'Entrando...' : 'Entrar')}
+          </button>
         </form>
 
         <div className="login-foot">Acesso restrito à equipe.</div>

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    name: API (memoria e Postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: operacional
+          POSTGRES_PASSWORD: senha-de-teste-do-ci
+          POSTGRES_DB: operacional_teste
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U operacional"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+
+    env:
+      # segredo descartavel, so para o processo do CI subir
+      SESSION_SECRET: ci-secret-descartavel-com-mais-de-32-caracteres-aleatorios
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: backend
+        run: npm ci
+
+      - name: Testes no repositorio em memoria
+        working-directory: backend
+        run: npm test
+
+      - name: Preparar o banco
+        run: |
+          PGPASSWORD=senha-de-teste-do-ci psql -h localhost -U operacional -d operacional_teste -f backend/db/schema.sql
+          PGPASSWORD=senha-de-teste-do-ci psql -h localhost -U operacional -d operacional_teste -f backend/db/seed.sql
+          PGPASSWORD=senha-de-teste-do-ci psql -h localhost -U operacional -d operacional_teste -f backend/db/session.sql
+
+      - name: Mesmos testes no Postgres (paridade dos repositorios)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://operacional:senha-de-teste-do-ci@localhost:5432/operacional_teste
+        run: npm run test:pg
+
+      - name: Vulnerabilidades nas dependencias
+        working-directory: backend
+        run: npm audit --audit-level=high
+
+  frontend:
+    name: Front (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+
+      - name: Testes do front (Vitest)
+        working-directory: frontend
+        run: npm test
+
+      - name: Build de producao
+        working-directory: frontend
+        run: npm run build
+
+      - name: Vulnerabilidades nas dependencias
+        working-directory: frontend
+        run: npm audit --audit-level=high

@@ -3,8 +3,12 @@
 const express = require('express');
 const repo = require('../data');
 const { exigirLogin } = require('../middleware/auth');
+const { comIdValidado } = require('../middleware/params');
+const { barramento } = require('../services/eventos');
 
 const router = express.Router();
+// :id sempre numerico (nunca chega NaN no banco)
+comIdValidado(router);
 
 // Qualquer usuário logado acessa suas notificações.
 // Admin (atendimento) vê todas; membro vê as do próprio setor (+ globais).
@@ -25,10 +29,61 @@ router.get('/', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * GET /api/notificacoes/stream  (Server-Sent Events)
+ *
+ * A tela abre esta conexão e fica ouvindo. Quando nasce uma notificação do
+ * escopo da pessoa, mandamos um aviso e o front recarrega a lista. Isso
+ * substitui a pergunta a cada 20 segundos que existia antes: menos requisição
+ * e o aviso chega na hora.
+ */
+router.get('/stream', (req, res) => {
+  const meuSetor = escopoSetor(req.usuario); // null = admin (vê tudo)
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no', // nginx não segura o fluxo
+  });
+  res.write('retry: 5000\n\n'); // se a conexão cair, o navegador volta em 5s
+
+  const enviar = (evento, dados) => {
+    res.write(`event: ${evento}\ndata: ${JSON.stringify(dados || {})}\n\n`);
+  };
+
+  enviar('pronto', { escopo: meuSetor === null ? 'todos' : meuSetor });
+
+  const aoNotificar = (info) => {
+    // membro só é avisado do próprio setor (ou de aviso geral)
+    if (meuSetor !== null && info.setor_id != null && info.setor_id !== meuSetor) return;
+    enviar('atualizar', info);
+  };
+  barramento.on('notificacao', aoNotificar);
+
+  // ping para o proxy não derrubar a conexão por ociosidade
+  const ping = setInterval(() => enviar('ping', { t: Date.now() }), 25000);
+
+  const encerrar = () => {
+    clearInterval(ping);
+    barramento.off('notificacao', aoNotificar);
+    res.end();
+  };
+  req.on('close', encerrar);
+  req.on('error', encerrar);
+});
+
 // PATCH /api/notificacoes/:id/lida
+// So marca notificacao que o proprio usuario enxerga: membro nao mexe no
+// sino de outro setor.
 router.patch('/:id/lida', async (req, res, next) => {
   try {
-    const ok = await repo.marcarNotificacaoLida(Number(req.params.id));
+    const id = Number(req.params.id);
+    const minhas = await repo.listarNotificacoes({ setorId: escopoSetor(req.usuario) });
+    if (!minhas.some((n) => n.id === id)) {
+      return res.status(404).json({ erro: 'Notificação não encontrada' });
+    }
+    const ok = await repo.marcarNotificacaoLida(id);
     if (!ok) return res.status(404).json({ erro: 'Notificação não encontrada' });
     res.json({ ok: true });
   } catch (e) { next(e); }

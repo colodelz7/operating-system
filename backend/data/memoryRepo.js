@@ -10,7 +10,10 @@ const seed = require('./seedData');
 const db = {
   setores:   seed.setores.map((x) => ({ ...x })),
   colunas:   seed.colunas.map((x) => ({ ...x })),
-  usuarios:  seed.usuarios.map((x) => ({ ...x, senha_hash: bcrypt.hashSync(seed.SENHA_PADRAO, 10) })),
+  usuarios:  seed.usuarios.map((x) => ({
+    ...x, senha_hash: bcrypt.hashSync(seed.SENHA_PADRAO, 10),
+    ativo: x.ativo !== false, pode_clientes: !!x.pode_clientes,
+  })),
   clientes:  seed.clientes.map((x) => ({ ...x })),
   tarefas:   seed.tarefas.map((x) => ({
     ...x, responsaveis: [...x.responsaveis],
@@ -21,6 +24,7 @@ const db = {
   notificacoes: [],
   comentarios: [],
   historico: [],
+  bloqueios: new Map(),
 };
 
 const nextId = (arr) => (arr.reduce((m, x) => Math.max(m, x.id), 0) + 1);
@@ -38,6 +42,8 @@ function usuarioPublico(u) {
     id: u.id, nome: u.nome, usuario: u.usuario, papel: u.papel,
     setor_id: u.setor_id, setor_slug: s ? s.slug : null, setor_nome: s ? s.nome : null,
     colunas_visiveis: Array.isArray(u.colunas_visiveis) ? u.colunas_visiveis.slice() : null,
+    ativo: u.ativo !== false,
+    pode_clientes: !!u.pode_clientes,
   };
 }
 // resolve nomes de coluna -> ids dentro de um setor
@@ -115,6 +121,10 @@ function montaTarefa(t) {
     setor_nome: setor ? setor.nome : null,
     coluna_id: t.coluna_id,
     coluna_nome: coluna ? coluna.nome : null,
+    // o front decide "concluida" por esta flag (nunca pelo nome da coluna):
+    // sem ela, kanban, calendario e visao geral tratavam tarefa pronta como
+    // pendente no modo em memoria.
+    coluna_conclusao: coluna ? !!coluna.e_conclusao : false,
     prioridade: t.prioridade,
     data_inicio: t.data_inicio,
     data_entrega: t.data_entrega,
@@ -132,6 +142,11 @@ function montaTarefa(t) {
     retrabalho_design: t.retrabalho_design || 0,
     retrabalho_edicao: t.retrabalho_edicao || 0,
     retrabalho_pdf: t.retrabalho_pdf || 0,
+    recorrencia: t.recorrencia || null,
+    recorrencia_ate: t.recorrencia_ate || null,
+    recorrencia_origem_id: t.recorrencia_origem_id || null,
+    recorrencia_gerou_id: t.recorrencia_gerou_id || null,
+    comentarios: db.comentarios.filter((c) => c.tarefa_id === t.id).length,
   };
 }
 
@@ -177,10 +192,11 @@ module.exports = {
     if (!u) return null;
     const s = db.setores.find((x) => x.id === u.setor_id);
     return { id: u.id, nome: u.nome, usuario: u.usuario, papel: u.papel,
-             setor_id: u.setor_id, setor_slug: s ? s.slug : null, setor_nome: s ? s.nome : null };
+             setor_id: u.setor_id, setor_slug: s ? s.slug : null, setor_nome: s ? s.nome : null,
+             ativo: u.ativo !== false, pode_clientes: !!u.pode_clientes };
   },
   async listarUsuariosDoSetor(setorId) {
-    return db.usuarios.filter((u) => u.setor_id === setorId)
+    return db.usuarios.filter((u) => u.setor_id === setorId && u.ativo !== false)
       .map((u) => ({ id: u.id, nome: u.nome, usuario: u.usuario }));
   },
 
@@ -189,7 +205,7 @@ module.exports = {
     return db.usuarios.slice().sort((a, b) => a.nome.localeCompare(b.nome)).map(usuarioPublico);
   },
   async contarAdmins() {
-    return db.usuarios.filter((u) => u.papel === 'admin').length;
+    return db.usuarios.filter((u) => u.papel === 'admin' && u.ativo !== false).length;
   },
   async criarUsuario(d) {
     const u = {
@@ -197,6 +213,8 @@ module.exports = {
       nome: d.nome, usuario: d.usuario, senha_hash: d.senha_hash,
       setor_id: d.setor_id, papel: d.papel,
       colunas_visiveis: Array.isArray(d.colunas_visiveis) ? d.colunas_visiveis.slice() : null,
+      ativo: d.ativo !== false,
+      pode_clientes: !!d.pode_clientes,
     };
     db.usuarios.push(u);
     return usuarioPublico(u);
@@ -209,6 +227,8 @@ module.exports = {
     if ('senha_hash' in d && d.senha_hash) u.senha_hash = d.senha_hash;
     if ('setor_id' in d) u.setor_id = d.setor_id;
     if ('papel' in d) u.papel = d.papel;
+    if ('ativo' in d) u.ativo = !!d.ativo;
+    if ('pode_clientes' in d) u.pode_clientes = !!d.pode_clientes;
     if ('colunas_visiveis' in d) {
       u.colunas_visiveis = Array.isArray(d.colunas_visiveis) ? d.colunas_visiveis.slice() : null;
     }
@@ -285,6 +305,10 @@ module.exports = {
       responsaveis: Array.isArray(dados.responsaveis) ? dados.responsaveis.slice() : [],
       concluida_em: null, andamento_inicio: null,
       retrabalho_design: 0, retrabalho_edicao: 0, retrabalho_pdf: 0,
+      recorrencia: dados.recorrencia || null,
+      recorrencia_ate: dados.recorrencia_ate || null,
+      recorrencia_origem_id: dados.recorrencia_origem_id || null,
+      recorrencia_gerou_id: null,
     };
     // se ja nasce numa coluna de trabalho, inicia cronometro
     const primeira = primeiraColunaDo(t.setor_id);
@@ -292,14 +316,17 @@ module.exports = {
     if (col && primeira && col.id !== primeira.id && !col.e_conclusao) {
       t.andamento_inicio = new Date().toISOString();
       const rt = ehRetrabalho(col.nome); if (rt) t['retrabalho_' + rt] += 1;
-      if (col.e_conclusao) t.concluida_em = new Date().toISOString();
     }
+    // nasceu direto numa coluna de conclusao: ja entra concluida (antes ficava
+    // na coluna de "pronto" para sempre sem data de conclusao)
+    if (col && col.e_conclusao) t.concluida_em = new Date().toISOString();
     db.tarefas.push(t);
     return montaTarefa(t);
   },
   async atualizarTarefa(id, dados) {
     const t = db.tarefas.find((x) => x.id === id); if (!t) return null;
-    ['titulo', 'descricao', 'cliente_id', 'prioridade', 'data_inicio', 'data_entrega', 'data_publicacao']
+    ['titulo', 'descricao', 'cliente_id', 'prioridade', 'data_inicio', 'data_entrega', 'data_publicacao',
+      'recorrencia', 'recorrencia_ate']
       .forEach((k) => { if (k in dados) t[k] = dados[k]; });
     if (Array.isArray(dados.responsaveis)) t.responsaveis = dados.responsaveis.slice();
     return montaTarefa(t);
@@ -334,24 +361,133 @@ module.exports = {
     return true;
   },
 
-  // ---------------- HISTORICO ----------------
+  // ---------------- COMENTARIOS ----------------
+  async listarComentarios(tarefaId) {
+    return db.comentarios
+      .filter((c) => c.tarefa_id === tarefaId)
+      .sort((a, b) => a.id - b.id)
+      .map((c) => {
+        const u = db.usuarios.find((x) => x.id === c.usuario_id);
+        return { ...clone(c), usuario_nome: u ? u.nome : 'Usuário removido' };
+      });
+  },
+  async criarComentario(dados) {
+    const c = {
+      id: nextId(db.comentarios),
+      tarefa_id: dados.tarefa_id,
+      usuario_id: dados.usuario_id,
+      texto: dados.texto,
+      criado_em: new Date().toISOString(),
+    };
+    db.comentarios.push(c);
+    const u = db.usuarios.find((x) => x.id === c.usuario_id);
+    return { ...clone(c), usuario_nome: u ? u.nome : '' };
+  },
+  async buscarComentario(id) {
+    const c = db.comentarios.find((x) => x.id === id);
+    return c ? clone(c) : null;
+  },
+  async excluirComentario(id) {
+    const i = db.comentarios.findIndex((x) => x.id === id);
+    if (i === -1) return false;
+    db.comentarios.splice(i, 1);
+    return true;
+  },
+
+  // ---------------- RECORRENCIA ----------------
+  // Cabeca da serie = tem frequencia definida e ainda nao gerou a proxima.
+  async listarTarefasRecorrentesPendentes() {
+    return db.tarefas
+      .filter((t) => t.recorrencia && !t.recorrencia_gerou_id)
+      .map(montaTarefa);
+  },
+  async marcarRecorrenciaGerada(id, novaId) {
+    const t = db.tarefas.find((x) => x.id === id);
+    if (!t) return false;
+    t.recorrencia_gerou_id = novaId;
+    return true;
+  },
+
+  // ---------------- HISTORICO (trilha de auditoria) ----------------
   async registrarHistorico(dados) {
     const h = {
       id: nextId(db.historico),
-      tipo: dados.tipo, tarefa_id: dados.tarefa_id || null, titulo: dados.titulo || '',
+      tipo: dados.tipo,
+      entidade: dados.entidade || 'tarefa',
+      entidade_id: dados.entidade_id != null ? dados.entidade_id : (dados.tarefa_id || null),
+      tarefa_id: dados.tarefa_id || null,
+      titulo: dados.titulo || '',
       setor_id: dados.setor_id || null, usuario_id: dados.usuario_id || null,
       usuario_nome: dados.usuario_nome || '', detalhe: dados.detalhe || '',
       cliente_id: dados.cliente_id || null, cliente_nome: dados.cliente_nome || '',
       responsaveis: Array.isArray(dados.responsaveis) ? dados.responsaveis : [],
+      ip: dados.ip || '', user_agent: dados.user_agent || '',
       criado_em: new Date().toISOString(),
     };
     db.historico.push(h);
     return clone(h);
   },
-  async listarHistorico({ limit = 300, setorId = null } = {}) {
+  // Filtros aceitos: setorId, entidade, tipo, usuarioId, de/ate (YYYY-MM-DD),
+  // q (busca livre em titulo, autor, cliente, detalhe e IP) e limit.
+  async listarHistorico(filtros = {}) {
+    const { limit = 300, setorId = null, entidade = null, tipo = null,
+            usuarioId = null, de = null, ate = null, q = null, antesDe = null } = filtros;
+    const busca = q ? String(q).toLowerCase() : null;
+
     let l = db.historico.slice().sort((a, b) => b.id - a.id);
-    if (setorId != null) l = l.filter((h) => h.setor_id === setorId);
+    // cursor: so o que veio ANTES do ultimo id ja entregue (pagina seguinte)
+    if (antesDe != null) l = l.filter((h) => h.id < Number(antesDe));
+    if (setorId != null) l = l.filter((h) => h.setor_id === Number(setorId));
+    if (entidade) l = l.filter((h) => (h.entidade || 'tarefa') === entidade);
+    if (tipo) l = l.filter((h) => h.tipo === tipo);
+    if (usuarioId != null) l = l.filter((h) => h.usuario_id === Number(usuarioId));
+    if (de) l = l.filter((h) => (h.criado_em || '').slice(0, 10) >= de);
+    if (ate) l = l.filter((h) => (h.criado_em || '').slice(0, 10) <= ate);
+    if (busca) {
+      l = l.filter((h) => [h.titulo, h.usuario_nome, h.cliente_nome, h.detalhe, h.ip]
+        .some((c) => String(c || '').toLowerCase().includes(busca)));
+    }
     return l.slice(0, limit).map(clone);
+  },
+  // Valores distintos para montar os seletores da tela sem depender da
+  // pagina carregada.
+  async opcoesHistorico() {
+    const distintos = (fn) => Array.from(new Set(db.historico.map(fn).filter((v) => v !== null && v !== undefined && v !== '')));
+    return {
+      pessoas: distintos((h) => h.usuario_nome).sort((a, b) => String(a).localeCompare(String(b))),
+      clientes: distintos((h) => h.cliente_nome).sort((a, b) => String(a).localeCompare(String(b))),
+      setores: distintos((h) => h.setor_id).sort((a, b) => a - b),
+      entidades: distintos((h) => h.entidade || 'tarefa').sort(),
+      tipos: distintos((h) => h.tipo).sort(),
+      total: db.historico.length,
+    };
+  },
+
+  // ---------------- BLOQUEIO DE LOGIN ----------------
+  // Mesma interface do pgRepo: quem decide a regra e o middleware, aqui so
+  // guardamos e devolvemos o contador.
+  async lerBloqueio(chave) {
+    const b = db.bloqueios.get(chave);
+    return b ? { ...b } : null;
+  },
+  async salvarBloqueio(chave, dados) {
+    db.bloqueios.set(chave, {
+      falhas: dados.falhas,
+      ate: dados.ate || null,
+      visto: dados.visto || Date.now(),
+    });
+    return true;
+  },
+  async limparBloqueios(chaves) {
+    (chaves || []).forEach((c) => db.bloqueios.delete(c));
+    return true;
+  },
+  async limparBloqueiosVelhos(antesDe) {
+    for (const [chave, b] of db.bloqueios) {
+      const expirou = (b.ate && b.ate <= Date.now()) || (!b.ate && b.visto < antesDe);
+      if (expirou) db.bloqueios.delete(chave);
+    }
+    return true;
   },
 
   // ---------------- ANEXOS ----------------

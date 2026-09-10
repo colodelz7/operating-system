@@ -18,4 +18,16 @@ const loginRateLimit = rateLimit({
   message: { erro: 'Muitas tentativas de login. Tente novamente em alguns minutos.' },
 });
 
-module.exports = { loginRateLimit };
+// Teto de mensagens do assistente, por usuario logado (a chamada ao modelo
+// custa dinheiro e tempo). Cai para o IP se, por algum motivo, nao houver
+// sessao.
+const assistenteRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: config.assistenteMaxPorMinuto,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => 'u' + ((req.session && req.session.usuarioId) || req.ip),
+  message: { erro: 'Muitas mensagens seguidas para o assistente. Respire e tente de novo em um minuto.' },
+});
+
+module.exports = { loginRateLimit, assistenteRateLimit };

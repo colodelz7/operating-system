@@ -10,6 +10,13 @@ const zInteiroOuNull = z.any().transform((x) => v.inteiroOuNull(x));
 const zDataOuNull = z.any().transform((x) => v.dataOuNull(x));
 const zPrioridade = z.any().transform((x) => v.prioridade(x));
 const zResponsaveis = z.any().transform((x) => v.listaDeInteiros(x));
+// Recorrencia: so as frequencias conhecidas passam; qualquer outra coisa
+// (inclusive vazio) vira null, ou seja, tarefa que nao repete.
+const RECORRENCIAS = ['diaria', 'semanal', 'quinzenal', 'mensal'];
+const zRecorrencia = z.any().transform((x) => {
+  const s = String(x ?? '').trim();
+  return RECORRENCIAS.includes(s) ? s : null;
+});
 
 // POST /api/tarefas
 const criarTarefaSchema = z.object({
@@ -24,6 +31,8 @@ const criarTarefaSchema = z.object({
   data_entrega: zDataOuNull,
   data_publicacao: zDataOuNull,
   responsaveis: zResponsaveis,
+  recorrencia: zRecorrencia,
+  recorrencia_ate: zDataOuNull,
 });
 
 // PUT /api/tarefas/:id  (parcial: so os campos presentes sao atualizados)
@@ -36,6 +45,8 @@ const atualizarTarefaSchema = z.object({
   data_entrega: zDataOuNull,
   data_publicacao: zDataOuNull,
   responsaveis: zResponsaveis,
+  recorrencia: zRecorrencia,
+  recorrencia_ate: zDataOuNull,
 }).partial();
 
 // PATCH /api/tarefas/:id/mover
@@ -43,4 +54,4 @@ const moverTarefaSchema = z.object({
   coluna_id: zInteiroOuNull,
 });
 
-module.exports = { criarTarefaSchema, atualizarTarefaSchema, moverTarefaSchema };
+module.exports = { criarTarefaSchema, atualizarTarefaSchema, moverTarefaSchema, RECORRENCIAS };

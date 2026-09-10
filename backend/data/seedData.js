@@ -2,10 +2,11 @@
 
 /**
  * Fonte da verdade dos dados iniciais (memoria/local e espelho do seed.sql).
- * Senha padrao de TODOS os usuarios: colodel2026
+ * Senha padrao de TODOS os usuarios de exemplo: colodel
+ * (troque as senhas pela tela de Usuarios assim que subir o sistema)
  */
 
-const SENHA_PADRAO = 'colodel2026';
+const SENHA_PADRAO = 'colodel';
 
 // util de data (YYYY-MM-DD)
 function hojeMais(dias) {
@@ -73,20 +74,15 @@ setores.forEach((s) => {
 // VISIBILIDADE DE COLUNAS POR USUARIO (apenas Criativo restringe)
 // null / ausente = ve todas as colunas do seu setor. Admin ve tudo.
 // ------------------------------------------------------------
-const colsCriativoRestrito = [
-  'Pendente', 'Até 2 dias', 'Pra hoje', 'Aprovação', 'Referências',
-  'Planejamento', 'Roteiros', 'Finalizados', 'Retrabalho Edição',
-];
-// Membros com fluxo focado em PDF/Design
+// Exemplo de fluxo focado (Design/PDF) para quem so acompanha parte do
+// Criativo. Preencha por login quando quiser restringir alguem no seed;
+// pela tela de Usuarios isso e editavel a qualquer momento.
 const colsPdfDesign = [
   'Pendente', 'Até 2 dias', 'Pra hoje', 'Fazer PDF', 'Aprovação',
   'Programar', 'Finalizados', 'Retrabalho Design',
 ];
 const colunasVisiveisPorUsuario = {
-  usuario05: null,                    // ve todas do Criativo
-  usuario07: colsCriativoRestrito,
-  usuario06: colsPdfDesign,
-  usuario08: colsPdfDesign,
+  // 'login': colsPdfDesign,   // null/ausente = ve todas as colunas do setor
 };
 
 // ------------------------------------------------------------
@@ -94,22 +90,11 @@ const colunasVisiveisPorUsuario = {
 // Dados 100% genericos/fictícios - substitua pelos usuarios reais.
 // ------------------------------------------------------------
 const usuarios = [
-  // ADMIN / ATENDIMENTO
-  { id: 1,  nome: 'Administrador', usuario: 'admin',     setor_id: 1, papel: 'admin' },
-  { id: 2,  nome: 'Usuário 02',    usuario: 'usuario02',  setor_id: 1, papel: 'admin' },
-  { id: 3,  nome: 'Usuário 03',    usuario: 'usuario03',  setor_id: 1, papel: 'admin' },
-  // COMERCIAL
-  { id: 4,  nome: 'Usuário 04',    usuario: 'usuario04',  setor_id: 2, papel: 'membro' },
-  // CRIATIVO
-  { id: 5,  nome: 'Usuário 05',    usuario: 'usuario05',  setor_id: 3, papel: 'membro' },
-  { id: 6,  nome: 'Usuário 06',    usuario: 'usuario06',  setor_id: 3, papel: 'membro' },
-  { id: 7,  nome: 'Usuário 07',    usuario: 'usuario07',  setor_id: 3, papel: 'membro' },
-  { id: 8,  nome: 'Usuário 08',    usuario: 'usuario08',  setor_id: 3, papel: 'membro' },
-  // TRÁFEGO PAGO
-  { id: 9,  nome: 'Usuário 09',    usuario: 'usuario09',  setor_id: 4, papel: 'membro' },
-  // DESENVOLVIMENTO
-  { id: 10, nome: 'Usuário 10',    usuario: 'usuario10',  setor_id: 5, papel: 'membro' },
-  { id: 11, nome: 'Usuário 11',    usuario: 'usuario11',  setor_id: 5, papel: 'membro' },
+  // Atendimento = papel 'admin' (ve todos os setores e gerencia o sistema)
+  { id: 1, nome: 'Administrador', usuario: 'admin',   setor_id: 1, papel: 'admin' },
+  { id: 2, nome: 'Colodel',       usuario: 'colodel', setor_id: 1, papel: 'admin' },
+  // Membro: enxerga apenas o proprio setor
+  { id: 3, nome: 'Morning',       usuario: 'morning', setor_id: 3, papel: 'membro' },
 ];
 
 // ------------------------------------------------------------
@@ -145,28 +130,28 @@ function colDe(setorSlug, nomeColuna) {
 
 const tarefas = [
   {
-    id: 1, titulo: 'Cliente Exemplo A — 2 estáticos',
+    id: 1, titulo: 'Cliente Exemplo A: 2 estáticos',
     descricao: 'Desenvolver 2 posts estáticos seguindo o planejamento enviado.',
     setor_id: 3, coluna_id: colDe('criativo', 'Pendente'),
     cliente_id: 1, prioridade: 'normal',
     data_inicio: null, data_entrega: hojeMais(2), data_publicacao: null,
-    criado_por: 1, responsaveis: [5, 8], concluida_em: null,
+    criado_por: 1, responsaveis: [3], concluida_em: null,
   },
   {
-    id: 2, titulo: 'Cliente Exemplo B — Página institucional',
+    id: 2, titulo: 'Cliente Exemplo B: Página institucional',
     descricao: 'Desenvolvimento da nova página com SEO on-page.',
     setor_id: 5, coluna_id: colDe('desenvolvimento', 'Em andamento'),
     cliente_id: 2, prioridade: 'alta',
     data_inicio: hojeMais(-3), data_entrega: hojeMais(1), data_publicacao: hojeMais(4),
-    criado_por: 1, responsaveis: [10], concluida_em: null,
+    criado_por: 1, responsaveis: [2], concluida_em: null,
   },
   {
-    id: 3, titulo: 'Cliente Exemplo A — Campanha de tráfego',
+    id: 3, titulo: 'Cliente Exemplo A: Campanha de tráfego',
     descricao: 'Subir campanha de conversão para a coleção de inverno.',
     setor_id: 4, coluna_id: colDe('trafego', 'Pendente'),
     cliente_id: 1, prioridade: 'normal',
     data_inicio: null, data_entrega: hojeMais(-1), data_publicacao: null,
-    criado_por: 1, responsaveis: [9], concluida_em: null,
+    criado_por: 1, responsaveis: [2], concluida_em: null,
   },
 ];
 

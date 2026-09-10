@@ -58,7 +58,7 @@ function CardArrastavel({ t, col, onAbrir }) {
     <article
       ref={setNodeRef} style={style} {...attributes} {...listeners}
       className={`card p-${t.prioridade} ${isDragging ? 'dragging' : ''} ${travada ? 'travada' : ''}`}
-      title={travada ? 'Concluída — travada (só admin reabre)' : undefined}
+      title={travada ? 'Concluída, travada (só admin reabre)' : undefined}
       onClick={() => { if (!isDragging) onAbrir(t.id); }}
     >
       <div className={`cli ${t.cliente_nome ? '' : 'sem'}`}>{t.cliente_nome || 'Sem cliente'}</div>
@@ -67,6 +67,8 @@ function CardArrastavel({ t, col, onAbrir }) {
         {mostraAtraso ? <span className="tag-atraso">Atrasado</span>
           : (t.data_entrega ? <span className="datas">🗓 {formatarData(t.data_entrega)}</span> : null)}
         {t.anexos && t.anexos.length ? <span className="tag-anexo">📎 {t.anexos.length}</span> : null}
+        {t.comentarios ? <span className="card-selo" title={`${t.comentarios} comentário(s)`}>💬 {t.comentarios}</span> : null}
+        {t.recorrencia ? <span className="card-selo repete" title={`Repete: ${t.recorrencia}`}>↻</span> : null}
         <span className="resp"><Resps lista={t.responsaveis} /></span>
       </div>
     </article>

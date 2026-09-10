@@ -6,7 +6,7 @@
  *   validate(schema)          -> valida/normaliza req.body
  *   validate(schema, 'query') -> valida/normaliza req.query
  *
- * Em caso de erro, responde 400 { erro: <primeira mensagem> } — mantendo
+ * Em caso de erro, responde 400 { erro: <primeira mensagem> }, mantendo
  * o mesmo formato de erro que o front ja consome (err.message = dados.erro).
  * Em caso de sucesso, substitui req[origem] pelos dados ja normalizados,
  * de modo que a rota trabalha com valores limpos (texto aparado, datas

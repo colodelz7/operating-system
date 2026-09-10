@@ -8,7 +8,7 @@
 --  Este seed espelha data/seedData.js (fonte da verdade do modo
 --  em memoria). Mantenha os dois em sincronia.
 --
---  Senha padrao de todos os usuarios: colodel2026
+--  Senha padrao de todos os usuarios de exemplo: colodel
 --  (hash bcrypt abaixo). TROQUE as senhas depois de subir.
 -- ------------------------------------------------------------
 
@@ -30,25 +30,13 @@ INSERT INTO setores (slug, nome, ordem, cor) VALUES
   ('desenvolvimento', 'Desenvolvimento', 5, '#3b2fb0');
 
 -- ---------------- USUARIOS ----------------
--- hash de 'colodel2026'
--- $2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6
+-- hash de 'colodel'
 INSERT INTO usuarios (nome, usuario, senha_hash, setor_id, papel) VALUES
-  -- ATENDIMENTO (admins)
-  ('Administrador', 'admin',     '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 1, 'admin'),
-  ('Usuário 02',     'usuario02', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 1, 'admin'),
-  ('Usuário 03',     'usuario03', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 1, 'admin'),
-  -- COMERCIAL
-  ('Usuário 04',     'usuario04', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 2, 'membro'),
-  -- CRIATIVO
-  ('Usuário 05',     'usuario05', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 3, 'membro'),
-  ('Usuário 06',     'usuario06', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 3, 'membro'),
-  ('Usuário 07',     'usuario07', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 3, 'membro'),
-  ('Usuário 08',     'usuario08', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 3, 'membro'),
-  -- TRÁFEGO PAGO
-  ('Usuário 09',     'usuario09', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 4, 'membro'),
-  -- DESENVOLVIMENTO
-  ('Usuário 10',     'usuario10', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 5, 'membro'),
-  ('Usuário 11',     'usuario11', '$2a$10$i0B8CqI4bgI95LaV1PLSiuiqO8Go1Q/ccJphW7KpIP5KufEifCHa6', 5, 'membro');
+  -- ATENDIMENTO (papel admin: ve todos os setores e gerencia o sistema)
+  ('Administrador', 'admin',   '$2a$10$iRBxMBMSduR9LSFmBTpjL.JbOsjwyJK7f3IN8TH6rkO4SHtS7iGv.', 1, 'admin'),
+  ('Colodel',       'colodel', '$2a$10$iRBxMBMSduR9LSFmBTpjL.JbOsjwyJK7f3IN8TH6rkO4SHtS7iGv.', 1, 'admin'),
+  -- CRIATIVO (membro: enxerga apenas o proprio setor)
+  ('Morning',       'morning', '$2a$10$iRBxMBMSduR9LSFmBTpjL.JbOsjwyJK7f3IN8TH6rkO4SHtS7iGv.', 3, 'membro');
 
 -- ---------------- COLUNAS POR SETOR ----------------
 -- Atendimento, Comercial, Trafego, Desenvolvimento: fluxo padrao (3 colunas)
@@ -86,22 +74,8 @@ WHERE s.slug = 'criativo';
 -- ---------------- VISIBILIDADE DE COLUNAS (Criativo) ----------------
 -- Vazio = ve todas as colunas do setor. usuario05 nao aparece aqui (ve tudo).
 -- usuario07: fluxo sem PDF/Programar.
-INSERT INTO usuario_colunas (usuario_id, coluna_id)
-SELECT u.id, col.id
-FROM usuarios u
-JOIN colunas_status col ON col.setor_id = 3
-WHERE u.usuario = 'usuario07'
-  AND col.nome IN ('Pendente','Até 2 dias','Pra hoje','Aprovação','Referências',
-                   'Planejamento','Roteiros','Finalizados','Retrabalho Edição');
-
--- usuario06 e usuario08: fluxo focado em PDF/Design.
-INSERT INTO usuario_colunas (usuario_id, coluna_id)
-SELECT u.id, col.id
-FROM usuarios u
-JOIN colunas_status col ON col.setor_id = 3
-WHERE u.usuario IN ('usuario06','usuario08')
-  AND col.nome IN ('Pendente','Até 2 dias','Pra hoje','Fazer PDF','Aprovação',
-                   'Programar','Finalizados','Retrabalho Design');
+-- Visibilidade de colunas por usuario (Criativo): ninguem restrito no seed.
+-- Para restringir, insira em usuario_colunas os ids de coluna liberados.
 
 -- ---------------- CLIENTES ----------------
 INSERT INTO clientes (empresa, razao_social, cnpj, nicho, tamanho, cep, endereco, complemento, cidade, estado, contato, telefone, email, site, instagram) VALUES
@@ -111,32 +85,32 @@ INSERT INTO clientes (empresa, razao_social, cnpj, nicho, tamanho, cep, endereco
 -- ---------------- TAREFAS DE EXEMPLO ----------------
 -- Cliente Exemplo A - 2 estaticos (Criativo / Pendente)
 INSERT INTO tarefas (titulo, descricao, setor_id, coluna_id, cliente_id, prioridade, data_entrega, criado_por)
-SELECT 'Cliente Exemplo A — 2 estáticos',
+SELECT 'Cliente Exemplo A: 2 estáticos',
        'Desenvolver 2 posts estáticos seguindo o planejamento enviado. Respeitar a estratégia já definida.',
        s.id, col.id, 1, 'normal', CURRENT_DATE + 2, 1
 FROM setores s JOIN colunas_status col ON col.setor_id = s.id AND col.nome = 'Pendente'
 WHERE s.slug = 'criativo';
 INSERT INTO tarefa_responsaveis (tarefa_id, usuario_id)
-SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario IN ('usuario05','usuario08');
+SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario = 'morning';
 
 -- Cliente Exemplo B - Pagina (Desenvolvimento / Em andamento)
 INSERT INTO tarefas (titulo, descricao, setor_id, coluna_id, cliente_id, prioridade, data_inicio, data_entrega, data_publicacao, criado_por)
-SELECT 'Cliente Exemplo B — Página institucional',
+SELECT 'Cliente Exemplo B: Página institucional',
        'Desenvolvimento da nova página com SEO on-page.',
        s.id, col.id, 2, 'alta', CURRENT_DATE - 3, CURRENT_DATE + 1, CURRENT_DATE + 4, 1
 FROM setores s JOIN colunas_status col ON col.setor_id = s.id AND col.nome = 'Em andamento'
 WHERE s.slug = 'desenvolvimento';
 INSERT INTO tarefa_responsaveis (tarefa_id, usuario_id)
-SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario = 'usuario10';
+SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario = 'colodel';
 
 -- Cliente Exemplo A - Trafego (vencida -> atrasada)
 INSERT INTO tarefas (titulo, descricao, setor_id, coluna_id, cliente_id, prioridade, data_entrega, criado_por)
-SELECT 'Cliente Exemplo A — Campanha de tráfego',
+SELECT 'Cliente Exemplo A: Campanha de tráfego',
        'Subir campanha de conversão para a coleção de inverno.',
        s.id, col.id, 1, 'normal', CURRENT_DATE - 1, 1
 FROM setores s JOIN colunas_status col ON col.setor_id = s.id AND col.nome = 'Pendente'
 WHERE s.slug = 'trafego';
 INSERT INTO tarefa_responsaveis (tarefa_id, usuario_id)
-SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario = 'usuario09';
+SELECT currval('tarefas_id_seq'), u.id FROM usuarios u WHERE u.usuario = 'colodel';
 
 COMMIT;

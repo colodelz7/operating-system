@@ -7,6 +7,9 @@ const cookieParser = require('cookie-parser');
 const config = require('./config');
 const repo = require('./data');
 const { criarSessionStore } = require('./middleware/sessionStore');
+const { cabecalhosSeguranca, verificarOrigem } = require('./middleware/seguranca');
+const { methodOverride } = require('./middleware/methodOverride');
+const { marcarChamadaDoAssistente } = require('./middleware/assistenteInterno');
 
 const app = express();
 app.disable('x-powered-by');
@@ -15,16 +18,37 @@ app.disable('x-powered-by');
 // do rate-limit. Controlado por TRUST_PROXY no .env.
 if (config.trustProxy) app.set('trust proxy', 1);
 
+// ---------- cabecalhos de seguranca (todas as respostas) ----------
+app.use(cabecalhosSeguranca);
+
 // ---------- parsers ----------
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// ---------- metodo real ----------
+// O WAF de algumas hospedagens barra PUT/PATCH/DELETE; o front manda POST
+// com X-HTTP-Method-Override e aqui o metodo volta a ser o verdadeiro.
+// Precisa vir antes das rotas (e depois dos parsers).
+app.use(methodOverride);
+
+// ---------- origem da chamada ----------
+// Quando o assistente executa uma acao, ele chama a propria API. Este
+// middleware reconhece essa chamada (por um token so deste processo) para a
+// auditoria registrar que a acao veio pelo ColodelBot.
+app.use(marcarChamadaDoAssistente);
+
+// ---------- anti-CSRF ----------
+// Escrita vinda de outro site nao passa: o cookie ja e sameSite=lax e aqui o
+// cabecalho Origin e conferido. Precisa vir depois do methodOverride, para
+// valer tambem para o PUT/PATCH/DELETE que chegou disfarcado de POST.
+app.use(verificarOrigem);
+
 // ---------- sessao ----------
 // Local (sem DATABASE_URL): MemoryStore.
 // Producao (com DATABASE_URL): connect-pg-simple persiste no Postgres.
 app.use(session({
-  name: 'colodel.sid',
+  name: config.cookieName,
   store: criarSessionStore(session),
   secret: config.sessionSecret,
   resave: false,
@@ -48,6 +72,9 @@ app.use('/api/tarefas',       require('./routes/tarefas'));
 app.use('/api/clientes',      require('./routes/clientes'));
 app.use('/api/notificacoes',  require('./routes/notificacoes'));
 app.use('/api/anexos',        require('./routes/anexos'));
+app.use('/api/historico',     require('./routes/historico'));
+app.use('/api/resumo-dia',    require('./routes/resumo'));
+app.use('/api/assistente',    require('./routes/assistente'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, modo: repo.modo }));
 
@@ -67,10 +94,11 @@ app.use((err, req, res, next) => {
 });
 
 // ---------- boot ----------
-async function iniciar(porta = config.port) {
+// Escuta so no loopback por padrao; expor na rede exige HOST explicito.
+async function iniciar(porta = config.port, host = config.host) {
   await repo.init();
   return new Promise((resolve) => {
-    const servidor = app.listen(porta, () => resolve(servidor));
+    const servidor = app.listen(porta, host, () => resolve(servidor));
   });
 }
 
@@ -81,15 +109,18 @@ if (require.main === module) {
   (async () => {
     try {
       await repo.init();
-      app.listen(config.port, () => {
+      require('./services/recorrencia').iniciarRotina();
+      app.listen(config.port, config.host, () => {
+        const publico = config.host === '0.0.0.0' || config.host === '::';
         console.log('==================================================');
-        console.log('  Colodel · Sistema de Tarefas (API)');
-        console.log(`  API em:  http://localhost:${config.port}/api`);
+        console.log('  Sistema Operacional (API)');
+        console.log(`  API em:  http://${publico ? 'localhost' : config.host}:${config.port}/api`);
+        console.log(`  Escutando em: ${config.host}${publico ? '  (exposto na rede, HOST definido)' : '  (somente esta máquina)'}`);
         console.log(`  Armazenamento: ${repo.modo.toUpperCase()}`);
         console.log(`  Sessao: ${config.usePostgres ? 'Postgres (connect-pg-simple)' : 'MemoryStore (local)'}`);
         if (repo.modo === 'memoria') {
-          console.log('  (dados em memoria — resetam ao reiniciar)');
-          console.log('  Login de teste: admin / colodel2026');
+          console.log('  (dados em memoria, resetam ao reiniciar)');
+          console.log('  Usuarios de exemplo em data/seedData.js (troque as senhas ao subir)');
         }
         console.log('==================================================');
       });

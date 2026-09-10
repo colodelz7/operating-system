@@ -39,7 +39,12 @@ CREATE TABLE usuarios (
   setor_id   INT  NOT NULL REFERENCES setores(id),
   papel      TEXT NOT NULL DEFAULT 'membro'  -- 'admin' | 'membro'
              CHECK (papel IN ('admin','membro')),
-  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- desligar alguem sem apagar o historico dela: conta desativada nao entra
+  -- e derruba a sessao aberta na requisicao seguinte
+  ativo         BOOLEAN NOT NULL DEFAULT true,
+  -- pode cadastrar e editar clientes (admin e o Comercial ja podem por regra)
+  pode_clientes BOOLEAN NOT NULL DEFAULT false
 );
 
 -- ---------------- COLUNAS DO KANBAN (por setor) ----------------
@@ -102,10 +107,19 @@ CREATE TABLE tarefas (
   retrabalho_design INT NOT NULL DEFAULT 0,     -- contadores de retrabalho (Criativo)
   retrabalho_edicao INT NOT NULL DEFAULT 0,
   retrabalho_pdf    INT NOT NULL DEFAULT 0,
-  criado_em       TIMESTAMPTZ NOT NULL DEFAULT now()
+  criado_em       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Recorrencia: a tarefa "cabeca" da serie guarda a frequencia. Ao concluir
+  -- (ou ao passar da entrega), o sistema cria a proxima ocorrencia e anota o
+  -- id dela em recorrencia_gerou_id. Esse campo e o que impede gerar duas
+  -- vezes a mesma ocorrencia.
+  recorrencia        TEXT CHECK (recorrencia IN ('diaria','semanal','quinzenal','mensal')),
+  recorrencia_ate    DATE,   -- limite opcional da serie
+  recorrencia_origem_id INT, -- de qual tarefa esta veio
+  recorrencia_gerou_id  INT  -- qual tarefa esta ja gerou
 );
 CREATE INDEX idx_tarefas_setor  ON tarefas(setor_id);
 CREATE INDEX idx_tarefas_coluna ON tarefas(coluna_id);
+CREATE INDEX idx_tarefas_recorrencia ON tarefas(recorrencia) WHERE recorrencia IS NOT NULL;
 
 -- ---------------- RESPONSAVEIS (N:N) ----------------
 CREATE TABLE tarefa_responsaveis (
@@ -134,6 +148,7 @@ CREATE TABLE comentarios (
   texto      TEXT NOT NULL,
   criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX idx_comentarios_tarefa ON comentarios(tarefa_id);
 
 -- ---------------- NOTIFICACOES (destino: admins/atendimento) ----------------
 CREATE TABLE notificacoes (
@@ -152,9 +167,15 @@ CREATE INDEX idx_notif_setor ON notificacoes(setor_id);
 
 -- ---------------- HISTORICO (trilha de auditoria das tarefas) ----------------
 -- Sem FKs de proposito: o historico sobrevive a exclusao de tarefas/usuarios.
+-- Trilha de auditoria. Gravada SEMPRE pelo backend (o navegador nunca
+-- escreve aqui). Guarda o que houve, com quem, quando, de qual IP e
+-- navegador. Sem chave estrangeira de proposito: o registro sobrevive a
+-- exclusao da tarefa/cliente/usuario que ele descreve.
 CREATE TABLE historico (
   id           SERIAL PRIMARY KEY,
-  tipo         TEXT NOT NULL,           -- criada | editada | movida | concluida | excluida
+  tipo         TEXT NOT NULL,           -- criada | editada | movida | concluida | excluida | login | login_falha | login_bloqueio | logout
+  entidade     TEXT NOT NULL DEFAULT 'tarefa', -- tarefa | cliente | usuario | setor | sessao
+  entidade_id  INT,
   tarefa_id    INT,
   titulo       TEXT DEFAULT '',
   setor_id     INT,
@@ -164,8 +185,23 @@ CREATE TABLE historico (
   cliente_id   INT,
   cliente_nome TEXT DEFAULT '',
   responsaveis JSONB DEFAULT '[]',
+  ip           TEXT DEFAULT '',
+  user_agent   TEXT DEFAULT '',
   criado_em    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_historico_setor ON historico(setor_id);
+CREATE INDEX idx_historico_setor    ON historico(setor_id);
+CREATE INDEX idx_historico_criado   ON historico(criado_em DESC);
+CREATE INDEX idx_historico_entidade ON historico(entidade);
+CREATE INDEX idx_historico_usuario  ON historico(usuario_id);
+
+-- Bloqueio temporario de login (por IP e por conta). Fica no banco para
+-- sobreviver a restart e valer para todas as instancias da API.
+CREATE TABLE login_bloqueio (
+  chave  TEXT PRIMARY KEY,          -- 'ip:1.2.3.4' ou 'conta:fulano'
+  falhas INT NOT NULL DEFAULT 0,
+  ate    TIMESTAMPTZ,               -- ate quando esta travado (null = so contando)
+  visto  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_login_bloqueio_visto ON login_bloqueio(visto);
 
 COMMIT;

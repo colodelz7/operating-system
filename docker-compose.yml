@@ -1,0 +1,87 @@
+# ============================================================
+#  Sistema Operacional :: ambiente local em containers
+# ============================================================
+#   docker compose up -d --build      -> API + frontend (dados em memoria)
+#   docker compose --profile pg up -d -> idem, com Postgres de verdade
+#
+# Tudo e publicado apenas em 127.0.0.1: nada fica exposto na rede.
+# O segredo de sessao vem do .env da raiz (que nao vai para o repositorio).
+
+name: operacional
+
+services:
+  api:
+    build:
+      context: ./backend
+    container_name: operacional-api
+    restart: unless-stopped
+    environment:
+      # Dentro do container escuta em todas as interfaces; quem restringe o
+      # acesso e a publicacao de porta abaixo, presa no loopback do host.
+      HOST: 0.0.0.0
+      PORT: 3001
+      SESSION_SECRET: ${SESSION_SECRET:?defina SESSION_SECRET no .env da raiz}
+      COOKIE_NAME: ${COOKIE_NAME:-operacional.sid}
+      # Vazio = repositorio em memoria. Com o profile "pg", aponte para o banco.
+      DATABASE_URL: ${DATABASE_URL:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Atras do nginx: precisa para o IP real chegar no rate limit e na auditoria.
+      TRUST_PROXY: "true"
+      # Assistente: a chave vive so no servidor.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GEMINI_MODEL_RESERVA: ${GEMINI_MODEL_RESERVA:-}
+      LOGIN_BLOQUEIO_TENTATIVAS: ${LOGIN_BLOQUEIO_TENTATIVAS:-3}
+      LOGIN_BLOQUEIO_MS: ${LOGIN_BLOQUEIO_MS:-300000}
+    # So espera o banco quando o profile "pg" esta ativo (required: false
+    # deixa o servico subir normalmente no modo em memoria).
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+    volumes:
+      # anexos e logos sobrevivem a recriacao do container
+      - uploads:/app/uploads
+    ports:
+      - "127.0.0.1:3001:3001"
+
+  web:
+    build:
+      context: ./frontend
+    container_name: operacional-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5174:80"
+
+  # Postgres opcional. Sobe so com:  docker compose --profile pg up -d
+  # Porta 5433 no host de proposito: a 5432 costuma ja estar ocupada por
+  # outro projeto na mesma maquina.
+  db:
+    image: postgres:16
+    container_name: operacional-db
+    profiles: ["pg"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-operacional}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env da raiz}
+      POSTGRES_DB: ${POSTGRES_DB:-operacional}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # schema e seed rodam sozinhos na primeira criacao do volume
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      - ./backend/db/session.sql:/docker-entrypoint-initdb.d/03-session.sql:ro
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-operacional} -d ${POSTGRES_DB:-operacional}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  uploads:
+  pgdata:

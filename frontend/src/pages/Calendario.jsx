@@ -12,7 +12,7 @@ import SeletorSetor from '../components/SeletorSetor';
 import BannerUrgentes from '../components/BannerUrgentes';
 import Filtros from '../components/Filtros';
 
-// O calendário trabalha SEMPRE com a data de entrega — que é a data
+// O calendário trabalha SEMPRE com a data de entrega, que é a data
 // mostrada e editada dentro da demanda. (data_publicacao foi descontinuada.)
 function campoData() {
   return 'data_entrega';

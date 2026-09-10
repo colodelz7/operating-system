@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+# Variaveis de ambiente: o .env tem o segredo de sessao e a string do banco
+.env
+.env.*
+!.env.example
+
+# Arquivos enviados pelos usuarios (logos de cliente, anexos de tarefa)
+uploads/*
+!uploads/.gitkeep
+
+*.log
