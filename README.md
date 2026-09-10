@@ -170,4 +170,4 @@ Dados de exemplo totalmente genéricos, sem informação real de clientes, colab
 
 ## 📄 Licença
 
-MIT. Veja o arquivo [LICENSE](LICENSE).
+Todos os direitos reservados. O código está público apenas para leitura e avaliação técnica, não para uso, cópia ou modificação. Veja o arquivo [LICENSE](LICENSE).
