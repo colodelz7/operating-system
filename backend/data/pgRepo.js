@@ -132,7 +132,7 @@ module.exports = {
   async buscarUsuarioPorId(id) {
     const r = await q(
       `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
-              s.slug AS setor_slug, s.nome AS setor_nome
+              u.senha_versao, s.slug AS setor_slug, s.nome AS setor_nome
          FROM usuarios u JOIN setores s ON s.id = u.setor_id
         WHERE u.id = $1`, [id]);
     return r.rows[0] || null;
@@ -188,9 +188,11 @@ module.exports = {
     const presentes = cols.filter((c) => c in d && !(c === 'senha_hash' && !d[c]));
     if (presentes.length) {
       const set = presentes.map((c, i) => `${c} = $${i + 1}`).join(',');
+      // senha nova, versao nova: quem estava logado com a antiga cai
+      const extra = presentes.includes('senha_hash') ? ', senha_versao = senha_versao + 1' : '';
       const vals = presentes.map((c) => d[c]);
       vals.push(id);
-      await q(`UPDATE usuarios SET ${set} WHERE id = $${vals.length}`, vals);
+      await q(`UPDATE usuarios SET ${set}${extra} WHERE id = ${vals.length}`, vals);
     }
     if ('colunas_visiveis' in d) await setColunasVisiveis(id, d.colunas_visiveis);
     return this.buscarUsuarioPublico(id);

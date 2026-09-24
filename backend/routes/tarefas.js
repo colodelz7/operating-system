@@ -4,6 +4,7 @@ const express = require('express');
 const repo = require('../data');
 const { exigirLogin, exigirAdmin, podeAcessarSetor } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
+const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
 const { validate } = require('../middleware/validate');
 const { registrar } = require('../middleware/auditoria');
 const { criarNotificacao } = require('../services/notificacoes');
@@ -352,7 +353,7 @@ router.delete('/:id/comentarios/:comentarioId', exigirLogin, async (req, res, ne
 });
 
 // POST /api/tarefas/:id/anexos   (multipart: campo "arquivo")
-router.post('/:id/anexos', exigirLogin, upload.single('arquivo'), async (req, res, next) => {
+router.post('/:id/anexos', exigirLogin, upload.single('arquivo'), conferirAssinatura, async (req, res, next) => {
   try {
     const atual = await repo.buscarTarefa(Number(req.params.id));
     if (!atual) return res.status(404).json({ erro: 'Tarefa não encontrada' });

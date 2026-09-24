@@ -4,6 +4,7 @@ const express = require('express');
 const repo = require('../data');
 const { exigirLogin, exigirGestaoDeClientes } = require('../middleware/auth');
 const { upload, caminhoSeguro } = require('../middleware/upload');
+const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
 const { validate } = require('../middleware/validate');
 const { registrar } = require('../middleware/auditoria');
 const { comIdValidado } = require('../middleware/params');
@@ -49,7 +50,7 @@ router.get('/:id/logo', exigirLogin, async (req, res, next) => {
 
 // POST /api/clientes   (logo opcional no campo "logo")
 // upload.single roda antes do validate para popular req.body (multipart).
-router.post('/', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), validate(criarClienteSchema), async (req, res, next) => {
+router.post('/', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), conferirAssinatura, validate(criarClienteSchema), async (req, res, next) => {
   try {
     const dados = { ...req.body };
     if (req.file) dados.logo_path = req.file.filename;
@@ -63,7 +64,7 @@ router.post('/', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), val
 });
 
 // PUT /api/clientes/:id
-router.put('/:id', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), validate(atualizarClienteSchema), async (req, res, next) => {
+router.put('/:id', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), conferirAssinatura, validate(atualizarClienteSchema), async (req, res, next) => {
   try {
     const dados = { ...req.body };
     if (req.file) dados.logo_path = req.file.filename;

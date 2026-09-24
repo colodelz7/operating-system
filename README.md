@@ -41,20 +41,22 @@ O projeto passou por uma auditoria completa de código, configuração, dependê
 - Sessão em cookie `httpOnly` com `SameSite=Lax` e `Secure` em produção, regenerada no login para evitar fixation.
 - O segredo de sessão é obrigatório e precisa ter no mínimo 32 caracteres: sem ele o servidor se recusa a iniciar, em vez de cair num padrão publicado no código.
 - Papel, setor e situação da conta são recarregados do banco a cada requisição: promover, rebaixar, desativar ou excluir alguém tem efeito imediato, inclusive em sessões já abertas.
-- Bloqueio de 5 minutos após 3 tentativas erradas, contado por IP e por conta, com cronômetro regressivo na tela de login. Com Postgres, o bloqueio fica no banco e sobrevive a restart.
-- Resposta genérica e comparação bcrypt mesmo quando a conta não existe, para o tempo de resposta não revelar quais logins são válidos.
+- Bloqueio de 5 minutos após 3 tentativas erradas, contado por origem e pelo par conta mais origem, com cronômetro regressivo na tela de login. Quem erra tranca a si mesmo, e não o dono da conta: ninguém consegue deixar outra pessoa de fora errando a senha dela de propósito. Falhas espalhadas por várias origens não travam a conta, mas entram no histórico como possível ataque distribuído. Com Postgres, o bloqueio fica no banco e sobrevive a restart.
+- Resposta genérica e comparação bcrypt contra um hash real de mesmo custo quando a conta não existe, para o tempo de resposta não revelar quais logins são válidos.
+- Trocar a senha derruba as sessões já abertas daquela pessoa: a sessão guarda a versão da senha que valia no login.
 - Proteção contra o sistema ficar sem nenhum administrador ativo.
 
 **Dados e autorização**
 - Todo SQL é parametrizado, e o `:id` da URL é validado antes de qualquer consulta.
 - Membro alcança apenas o próprio setor; exclusões de tarefa e de cliente exigem administrador.
 - Todo corpo e todo filtro de query passam por schema zod antes de tocar no banco.
-- Upload com allowlist de tipo, limite de 25 MB, nome no disco sempre aleatório e leitura por um resolvedor que recusa qualquer caminho que tente sair da pasta de uploads.
+- Upload com allowlist de tipo conferida pelo conteúdo do arquivo (assinatura nos primeiros bytes, não o tipo que o navegador declarou), limite de 25 MB, nome no disco sempre aleatório e leitura por um resolvedor que recusa qualquer caminho que tente sair da pasta de uploads. Arquivo recusado é apagado na hora, sem deixar lixo no disco.
 - A pré-visualização de anexo serve inline apenas os formatos que o navegador exibe com segurança (SVG fica de fora de propósito, por ser um documento que pode carregar script).
 
 **Superfície e infraestrutura**
-- A API escuta apenas em `127.0.0.1` por padrão. Expor na rede exige `HOST` explícito no `.env`.
-- Cabeçalhos de segurança em toda resposta: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP e CORP.
+- A API escuta apenas em `127.0.0.1` por padrão. Expor na rede exige `HOST` explícito no `.env`. Em containers ela não publica porta no host: quem fala com ela é o nginx, pela rede interna.
+- `TRUST_PROXY` diz em quem confiar quando chega `X-Forwarded-For`, e aceita lista de endereços ou faixas. Confiar em quem não é proxy deixaria qualquer cliente inventar o próprio IP e escapar do limite de tentativas de login.
+- Cabeçalhos de segurança em toda resposta da API: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP e CORP. O frontend também sai com CSP própria pelo nginx, que proíbe script inline e limita de onde vêm estilo, fonte e iframe.
 - Escritas conferem a origem da requisição, e alguns WAFs de hospedagem bloqueiam PUT, PATCH e DELETE: o front envia essas escritas como POST com `X-HTTP-Method-Override` e o servidor restaura o método, aceitando só esses três verbos.
 - Rate limit no login e no assistente, e `npm audit` zerado nos dois projetos.
 - Nenhum segredo versionado: os arquivos `.env` ficam fora do repositório e os `.env.example` não trazem valores de exemplo para senha ou chave.
@@ -65,6 +67,7 @@ O projeto passou por uma auditoria completa de código, configuração, dependê
 - O modelo não tem caminho próprio para o banco: cada ação é uma chamada à própria API com a sessão de quem está conversando, então ele consegue exatamente o que aquela pessoa conseguiria pela tela, com a mesma validação e a mesma auditoria.
 - Exclusão exige confirmação explícita, e quando a API recusa algo a resposta avisa o que não foi feito, mesmo que o texto do modelo diga o contrário.
 - Toda ação do assistente entra no histórico marcada como feita pelo ColodelBot.
+- Conteúdo vindo do banco (título, descrição, comentário) chega ao modelo marcado como dado, nunca como instrução, protegendo contra texto plantado por um usuário para comandar o assistente de outra pessoa.
 
 ## 📁 Estrutura
 
@@ -145,7 +148,7 @@ O banco sobe na porta 5433 do host, e `schema.sql`, `seed.sql` e `session.sql` r
 ### 🧪 Testes
 
 ```bash
-cd backend && npm test        # 102 verificações de fluxo e de segurança
+cd backend && npm test        # 113 verificações de fluxo e de segurança
 cd frontend && npm test       # 24 testes de componente e de biblioteca
 ```
 

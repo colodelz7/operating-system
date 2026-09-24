@@ -3,25 +3,40 @@
 /**
  * Bloqueio temporario de login.
  *
- * Depois de N falhas seguidas (padrao 3), o login fica travado por X minutos
- * (padrao 5). A contagem e feita em DUAS chaves independentes:
- *   - por IP    -> impede varredura de varias contas a partir da mesma origem;
- *   - por conta -> impede varredura de senhas da mesma conta a partir de
- *                  varios IPs.
- * O que estourar primeiro bloqueia, e o tempo restante volta na resposta para
- * a tela de login mostrar o cronometro regressivo.
+ * O desenho tem tres contadores, e a diferenca entre eles e o que impede que
+ * a protecao vire arma:
+ *
+ *   ip:<ip>            bloqueia a origem depois de N falhas. Segura quem
+ *                      varre varias contas a partir do mesmo lugar.
+ *   par:<conta>|<ip>   bloqueia aquela conta VINDA DAQUELA ORIGEM. Segura a
+ *                      forca bruta de senha sem afetar a pessoa de verdade,
+ *                      que entra de outro IP.
+ *   conta:<conta>      NAO bloqueia nada. So conta as falhas espalhadas e
+ *                      avisa a auditoria quando passam do teto, que e o
+ *                      sinal de ataque distribuido.
+ *
+ * Antes, o contador por conta bloqueava de verdade, e bastava errar a senha
+ * de alguem tres vezes para deixar essa pessoa de fora do sistema por cinco
+ * minutos, quantas vezes o atacante quisesse. Agora quem erra tranca a si
+ * mesmo, nao o dono da conta.
  *
  * O estado vive no repositorio: em memoria no modo local, e no Postgres
- * quando ha DATABASE_URL. Com banco, o bloqueio sobrevive a restart do
- * servidor e vale para todas as instancias da API ao mesmo tempo, que era a
- * brecha da versao anterior (bastava reiniciar para zerar a contagem).
+ * quando ha DATABASE_URL, entao o bloqueio sobrevive a restart e vale para
+ * todas as instancias da API.
  */
 
 const config = require('../config');
 const repo = require('../data');
 
+// Quantas falhas espalhadas por varios IPs ate a auditoria registrar que
+// aquela conta esta sob ataque. Nao bloqueia, so avisa.
+const FATOR_ALERTA = 4;
+
+const normalizarConta = (usuario) => String(usuario || '').toLowerCase().trim();
+
 const chaveIp = (ip) => 'ip:' + String(ip || 'desconhecido');
-const chaveConta = (usuario) => 'conta:' + String(usuario || '').toLowerCase().trim();
+const chavePar = (usuario, ip) => `par:${normalizarConta(usuario)}|${String(ip || 'desconhecido')}`;
+const chaveConta = (usuario) => 'conta:' + normalizarConta(usuario);
 
 // Le o registro descartando o que ja expirou (janela de contagem ou bloqueio).
 async function ler(chave) {
@@ -36,21 +51,30 @@ async function ler(chave) {
   return reg;
 }
 
-// Quanto falta (ms) para destravar. 0 = liberado.
+/**
+ * Quanto falta (ms) para destravar. Olha apenas as chaves que bloqueiam:
+ * a origem e o par conta+origem.
+ */
 async function estado(ip, usuario) {
-  const regs = await Promise.all([ler(chaveIp(ip)), ler(chaveConta(usuario))]);
+  const regs = await Promise.all([ler(chaveIp(ip)), ler(chavePar(usuario, ip))]);
   const agora = Date.now();
   const ms = regs.reduce((max, reg) => (reg && reg.ate ? Math.max(max, reg.ate - agora) : max), 0);
   const restanteMs = Math.max(0, ms);
   return { bloqueado: restanteMs > 0, restanteMs, segundos: Math.ceil(restanteMs / 1000) };
 }
 
-// Registra uma falha nas duas chaves e devolve o estado resultante.
+/**
+ * Registra uma falha nos tres contadores e devolve o estado resultante.
+ * O retorno traz ainda:
+ *   restantes          quantas tentativas faltam antes de travar
+ *   ataqueDistribuido  true quando a conta acumulou falhas de varias origens
+ */
 async function registrarFalha(ip, usuario) {
   const limite = config.loginBloqueioTentativas;
   const agora = Date.now();
 
-  for (const chave of [chaveIp(ip), chaveConta(usuario)]) {
+  // as duas chaves que travam
+  for (const chave of [chaveIp(ip), chavePar(usuario, ip)]) {
     const reg = (await ler(chave)) || { falhas: 0, ate: null };
     const falhas = reg.falhas + 1;
     await repo.salvarBloqueio(chave, {
@@ -60,15 +84,22 @@ async function registrarFalha(ip, usuario) {
     });
   }
 
+  // o contador da conta so observa, nunca bloqueia
+  const regConta = (await ler(chaveConta(usuario))) || { falhas: 0, ate: null };
+  const falhasDaConta = regConta.falhas + 1;
+  await repo.salvarBloqueio(chaveConta(usuario), { falhas: falhasDaConta, ate: null, visto: agora });
+
   const st = await estado(ip, usuario);
-  const reg = await ler(chaveConta(usuario));
-  st.restantes = Math.max(0, limite - ((reg && reg.falhas) || 0));
+  const par = await ler(chavePar(usuario, ip));
+  st.restantes = Math.max(0, limite - ((par && par.falhas) || 0));
+  st.ataqueDistribuido = falhasDaConta >= limite * FATOR_ALERTA;
+  st.falhasDaConta = falhasDaConta;
   return st;
 }
 
-// Login deu certo: zera as duas contagens.
+// Login deu certo: zera as contagens daquela pessoa naquela origem.
 async function limpar(ip, usuario) {
-  await repo.limparBloqueios([chaveIp(ip), chaveConta(usuario)]);
+  await repo.limparBloqueios([chaveIp(ip), chavePar(usuario, ip), chaveConta(usuario)]);
 }
 
 // Faxina periodica para a tabela (ou o mapa) nao crescer sem limite.

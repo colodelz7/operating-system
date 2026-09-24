@@ -36,6 +36,20 @@ function lerSessionSecret() {
   return bruto;
 }
 
+/**
+ * Le TRUST_PROXY no formato que o express entende, sem nunca cair no
+ * "confia em todo mundo". O valor antigo "true" vira as faixas privadas, que
+ * e onde vive o proxy reverso em qualquer instalacao normal (nginx ao lado,
+ * container na mesma rede, balanceador interno).
+ */
+function lerTrustProxy() {
+  const bruto = String(process.env.TRUST_PROXY || '').trim();
+  if (!bruto || bruto.toLowerCase() === 'false') return false;
+  if (bruto.toLowerCase() === 'true') return ['loopback', 'linklocal', 'uniquelocal'];
+  if (/^\d+$/.test(bruto)) return parseInt(bruto, 10);
+  return bruto.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 const config = {
   port: parseInt(process.env.PORT, 10) || 3001,
 
@@ -51,8 +65,19 @@ const config = {
   cookieSecure: String(process.env.COOKIE_SECURE).toLowerCase() === 'true',
 
   // Confie no proxy reverso (necessario p/ cookie secure e IP real do
-  // rate-limit quando o Node roda atras de nginx/host). "true" em producao.
-  trustProxy: String(process.env.TRUST_PROXY).toLowerCase() === 'true',
+  // rate-limit quando o Node roda atras de nginx/host).
+  //
+  // Aceita, do mais seguro para o mais frouxo:
+  //   vazio ou "false"  -> nao confia em ninguem (o IP e sempre o do socket)
+  //   "10.0.0.0/8, ..." -> confia so nesses enderecos ou faixas
+  //   "loopback"        -> presets do express (loopback, linklocal, uniquelocal)
+  //   "2"               -> confia nos 2 ultimos saltos
+  //   "true"            -> atalho para as faixas privadas (rede do proxy)
+  //
+  // Por que isso importa: com "trust proxy" aberto demais, qualquer cliente
+  // manda X-Forwarded-For inventado e o rate limit passa a contar o IP que o
+  // atacante escolheu. Ou seja, limite por IP deixa de existir.
+  trustProxy: lerTrustProxy(),
 
   // Rate limit do /api/auth/login (mitiga forca bruta)
   loginRateWindowMs: parseInt(process.env.LOGIN_RATE_WINDOW_MS, 10) || (15 * 60 * 1000), // 15 min

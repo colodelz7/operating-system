@@ -192,6 +192,7 @@ module.exports = {
     if (!u) return null;
     const s = db.setores.find((x) => x.id === u.setor_id);
     return { id: u.id, nome: u.nome, usuario: u.usuario, papel: u.papel,
+             senha_versao: u.senha_versao || 0,
              setor_id: u.setor_id, setor_slug: s ? s.slug : null, setor_nome: s ? s.nome : null,
              ativo: u.ativo !== false, pode_clientes: !!u.pode_clientes };
   },
@@ -224,7 +225,11 @@ module.exports = {
     if (!u) return null;
     if ('nome' in d) u.nome = d.nome;
     if ('usuario' in d) u.usuario = d.usuario;
-    if ('senha_hash' in d && d.senha_hash) u.senha_hash = d.senha_hash;
+    if ('senha_hash' in d && d.senha_hash) {
+      u.senha_hash = d.senha_hash;
+      // senha nova, versao nova: quem estava logado com a antiga cai
+      u.senha_versao = (u.senha_versao || 0) + 1;
+    }
     if ('setor_id' in d) u.setor_id = d.setor_id;
     if ('papel' in d) u.papel = d.papel;
     if ('ativo' in d) u.ativo = !!d.ativo;

@@ -24,6 +24,12 @@ async function exigirLogin(req, res, next) {
       req.session.destroy(() => {});
       return res.status(401).json({ erro: 'Conta desativada. Fale com o Atendimento.' });
     }
+    // Senha trocada depois deste login: a sessao antiga morre aqui. E o que
+    // faz trocar a senha realmente expulsar quem estava com ela.
+    if ((usuario.senha_versao || 0) !== (req.session.senhaVersao || 0)) {
+      req.session.destroy(() => {});
+      return res.status(401).json({ erro: 'Sua senha mudou. Entre novamente.' });
+    }
     req.usuario = usuario; // fonte da verdade vinda do banco
     next();
   } catch (e) { next(e); }

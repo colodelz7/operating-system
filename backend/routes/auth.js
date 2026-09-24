@@ -15,6 +15,19 @@ const router = express.Router();
 
 const minutos = (ms) => Math.max(1, Math.round(ms / 60000));
 
+/**
+ * Isca para quando a conta nao existe.
+ *
+ * Precisa ser um hash bcrypt DE VERDADE, com o mesmo custo dos hashes reais.
+ * A versao anterior usava uma string invalida: o bcrypt recusava na hora e a
+ * resposta voltava em 3ms, contra 120ms de uma conta existente. Esses 117ms
+ * de diferenca eram suficientes para descobrir quais logins existem, mesmo
+ * com a mensagem de erro sendo a mesma.
+ *
+ * Gerado uma vez no boot, sobre um valor aleatorio que ninguem conhece.
+ */
+const HASH_ISCA = bcrypt.hashSync(require('crypto').randomBytes(24).toString('hex'), 10);
+
 // POST /api/auth/login  { usuario, senha }
 // Camadas: rate-limit por IP -> schema -> bloqueio temporario -> senha.
 router.post('/login', loginRateLimit, validate(loginSchema), async (req, res, next) => {
@@ -43,7 +56,7 @@ router.post('/login', loginRateLimit, validate(loginSchema), async (req, res, ne
     // compara mesmo sem usuario, para o tempo de resposta nao entregar a conta
     const ok = u
       ? await bcrypt.compare(senha, u.senha_hash)
-      : (await bcrypt.compare(senha, '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinva'), false);
+      : (await bcrypt.compare(senha, HASH_ISCA), false);
 
     // 2) falhou: conta a tentativa (por IP e por conta) e audita.
     if (!ok) {
@@ -52,9 +65,20 @@ router.post('/login', loginRateLimit, validate(loginSchema), async (req, res, ne
         tipo: st.bloqueado ? 'login_bloqueio' : 'login_falha',
         entidade: 'sessao', usuario_id: u ? u.id : null, usuario_nome: usuario, titulo: usuario,
         detalhe: st.bloqueado
-          ? `errou a senha e ficou bloqueado por ${minutos(config.loginBloqueioMs)} minuto(s)`
-          : `errou a senha (restam ${st.restantes} tentativa(s))`,
+          ? `errou a senha e esta origem ficou bloqueada por ${minutos(config.loginBloqueioMs)} minuto(s)`
+          : `errou a senha (restam ${st.restantes} tentativa(s) desta origem)`,
       });
+
+      // Falhas espalhadas por varias origens na mesma conta: nao bloqueia
+      // ninguem (senao qualquer um trancaria a conta alheia), mas fica
+      // registrado para o Atendimento enxergar o ataque no historico.
+      if (st.ataqueDistribuido) {
+        await registrar(req, {
+          tipo: 'login_bloqueio', entidade: 'sessao',
+          usuario_id: u ? u.id : null, usuario_nome: usuario, titulo: usuario,
+          detalhe: `possivel ataque distribuido: ${st.falhasDaConta} falhas nesta conta vindas de varias origens`,
+        });
+      }
       if (st.bloqueado) {
         return res.status(429).json({
           erro: `Muitas tentativas. Acesso bloqueado por ${minutos(config.loginBloqueioMs)} minuto(s).`,
@@ -80,6 +104,9 @@ router.post('/login', loginRateLimit, validate(loginSchema), async (req, res, ne
     req.session.regenerate((err) => {
       if (err) return next(err);
       req.session.usuarioId = u.id;
+      // versao da senha no momento do login: se a senha mudar depois, esta
+      // sessao deixa de casar e cai no proximo pedido
+      req.session.senhaVersao = u.senha_versao || 0;
       req.session.save(async (err2) => {
         if (err2) return next(err2);
         await registrar(req, {

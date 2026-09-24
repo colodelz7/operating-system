@@ -12,6 +12,7 @@ const assert = require('assert');
 const { iniciar } = require('../server');
 const ferramentas = require('../services/assistente/ferramentas');
 const { sweepRecorrencias } = require('../services/recorrencia');
+const bloqueioLogin = require('../middleware/bloqueioLogin');
 
 const PORT = 4599;
 const BASE = `http://localhost:${PORT}`;
@@ -556,6 +557,77 @@ function ok(nome, cond) {
     await putA('DELETE', `/api/tarefas/${proximaId}`);
     await putA('DELETE', `/api/tarefas/${serie}`);
     await putA('DELETE', `/api/tarefas/${tarefaOutroSetor}`);
+
+    // ---- TROCA DE SENHA DERRUBA AS SESSOES ABERTAS ----
+    // Quem troca a senha porque desconfia de invasao precisa expulsar quem
+    // esta usando a sessao roubada. Antes disso, a sessao antiga seguia viva.
+    const sessaoAntiga = criarCliente();
+    await sessaoAntiga('POST', '/api/auth/login', { usuario: 'colodel', senha: SENHA });
+    const idColodel = (await sessaoAntiga('GET', '/api/auth/me')).dados.usuario.id;
+    ok('sessao aberta funciona antes da troca',
+      (await sessaoAntiga('GET', '/api/auth/me')).status === 200);
+
+    await putA('PUT', `/api/usuarios/${idColodel}`, { senha: 'senha-nova-123' });
+    r = await sessaoAntiga('GET', '/api/auth/me');
+    ok('sessao aberta cai depois da troca de senha', r.status === 401);
+
+    const sessaoNova = criarCliente();
+    r = await sessaoNova('POST', '/api/auth/login', { usuario: 'colodel', senha: 'senha-nova-123' });
+    ok('a senha nova entra normalmente', r.status === 200);
+    r = await sessaoNova('GET', '/api/auth/me');
+    ok('a sessao criada depois da troca continua valendo', r.status === 200);
+    await putA('PUT', `/api/usuarios/${idColodel}`, { senha: SENHA });
+
+    // ---- BLOQUEIO POR ORIGEM, NAO POR CONTA ----
+    // O contador que trava e o par conta+origem. Isso impede que um estranho
+    // tranque a conta de outra pessoa so errando a senha de proposito, que
+    // era o comportamento anterior.
+    const IP_ATACANTE = '203.0.113.10';
+    const IP_DONO = '198.51.100.20';
+
+    for (let i = 0; i < 5; i++) await bloqueioLogin.registrarFalha(IP_ATACANTE, 'admin');
+
+    let st = await bloqueioLogin.estado(IP_ATACANTE, 'admin');
+    ok('quem erra a senha trava a propria origem', st.bloqueado === true);
+
+    st = await bloqueioLogin.estado(IP_DONO, 'admin');
+    ok('o dono da conta, vindo de outra origem, continua livre', st.bloqueado === false);
+
+    st = await bloqueioLogin.estado(IP_ATACANTE, 'colodel');
+    ok('a origem travada nao entra em nenhuma conta', st.bloqueado === true);
+
+    // Ataque distribuido: uma origem nova a cada tentativa, entao nenhuma
+    // origem chega ao limite. A conta acumula falhas, e o sistema avisa sem
+    // travar ninguem (travar aqui seria justamente a porta para o abuso).
+    let ultimo = null;
+    for (let i = 0; i < 12; i++) ultimo = await bloqueioLogin.registrarFalha(`192.0.2.${i}`, 'colodel');
+    ok('falhas espalhadas viram alerta de ataque distribuido', ultimo.ataqueDistribuido === true);
+    ok('mesmo sob ataque distribuido, a conta nao e travada para o dono',
+      (await bloqueioLogin.estado(IP_DONO, 'colodel')).bloqueado === false);
+
+    await bloqueioLogin.limpar(IP_ATACANTE, 'admin');
+    st = await bloqueioLogin.estado(IP_ATACANTE, 'admin');
+    ok('acertar a senha limpa a contagem daquela origem', st.bloqueado === false);
+
+    // ---- TEMPO DE RESPOSTA DO LOGIN ----
+    // Conta inexistente precisa custar o mesmo que conta real, senao o
+    // relogio entrega quais logins existem.
+    // limpa a contagem entre as medidas: senao a terceira tentativa cai no
+    // bloqueio, responde na hora e a comparacao de tempo perde o sentido
+    const medir = async (conta) => {
+      await bloqueioLogin.limpar('127.0.0.1', conta);
+      const cli = criarCliente();
+      const t0 = process.hrtime.bigint();
+      await cli('POST', '/api/auth/login', { usuario: conta, senha: 'senha-qualquer-errada' });
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      await bloqueioLogin.limpar('127.0.0.1', conta);
+      return ms;
+    };
+    const tInexistente = Math.min(await medir('nao_existe_1'), await medir('nao_existe_2'));
+    const tExistente = Math.min(await medir('morning'), await medir('morning'));
+    const diferenca = Math.abs(tExistente - tInexistente);
+    ok(`login de conta inexistente custa o mesmo que o de conta real (diferenca ${diferenca.toFixed(0)}ms)`,
+      diferenca < Math.max(40, tExistente * 0.5));
 
     // ---- BLOQUEIO DE LOGIN (por ultimo: trava o IP de teste por 5 min) ----
     // 38) 3 senhas erradas -> 429 com o tempo restante para o cronometro

@@ -16,7 +16,7 @@ app.disable('x-powered-by');
 
 // Atras de proxy reverso (nginx/host): habilita cookie secure e IP real
 // do rate-limit. Controlado por TRUST_PROXY no .env.
-if (config.trustProxy) app.set('trust proxy', 1);
+if (config.trustProxy) app.set('trust proxy', config.trustProxy);
 
 // ---------- cabecalhos de seguranca (todas as respostas) ----------
 app.use(cabecalhosSeguranca);
@@ -82,13 +82,30 @@ app.get('/api/health', (req, res) => res.json({ ok: true, modo: repo.modo }));
 app.use((req, res) => res.status(404).json({ erro: 'Rota não encontrada' }));
 
 // ---------- tratamento de erros ----------
+// Erro de cliente (corpo torto, corpo grande demais, arquivo recusado) tem
+// que responder 4xx e NAO virar rastro de erro no log: antes tudo isso caia
+// no 500 generico, o que escondia problema de verdade no meio de requisicao
+// malformada e ainda enchia o log de stack trace.
 app.use((err, req, res, next) => {
   if (err && err.message === 'Tipo de arquivo não permitido') {
     return res.status(400).json({ erro: err.message });
   }
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(400).json({ erro: 'Arquivo excede o limite de 25MB' });
+    return res.status(413).json({ erro: 'Arquivo excede o limite de 25MB' });
   }
+  if (err && (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE')) {
+    return res.status(400).json({ erro: 'Envie um arquivo por vez, no campo esperado' });
+  }
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ erro: 'Corpo da requisição não é um JSON válido' });
+  }
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ erro: 'Conteúdo grande demais para esta rota' });
+  }
+  if (err && (err.type === 'encoding.unsupported' || err.type === 'charset.unsupported')) {
+    return res.status(415).json({ erro: 'Codificação não suportada' });
+  }
+
   console.error('[erro]', err);
   res.status(500).json({ erro: 'Erro interno do servidor' });
 });

@@ -40,6 +40,9 @@ CREATE TABLE usuarios (
   papel      TEXT NOT NULL DEFAULT 'membro'  -- 'admin' | 'membro'
              CHECK (papel IN ('admin','membro')),
   criado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Sobe a cada troca de senha. A sessao guarda o valor que valia no login,
+  -- entao trocar a senha invalida na hora as sessoes que ja estavam abertas.
+  senha_versao INT NOT NULL DEFAULT 0,
   -- desligar alguem sem apagar o historico dela: conta desativada nao entra
   -- e derruba a sessao aberta na requisicao seguinte
   ativo         BOOLEAN NOT NULL DEFAULT true,

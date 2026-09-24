@@ -42,8 +42,13 @@ services:
     volumes:
       # anexos e logos sobrevivem a recriacao do container
       - uploads:/app/uploads
-    ports:
-      - "127.0.0.1:3001:3001"
+    # A API NAO publica porta no host de proposito: quem fala com ela e o
+    # nginx, pela rede interna do compose. Publicar daria um caminho que
+    # contorna o proxy, e como o loopback e uma origem confiavel, por ali
+    # daria para forjar X-Forwarded-For e escapar do limite de tentativas.
+    # Para depurar: docker compose exec api node -e "..." ou use /api pelo :5174.
+    expose:
+      - "3001"
 
   web:
     build:

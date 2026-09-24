@@ -93,4 +93,7 @@ CREATE TABLE IF NOT EXISTS comentarios (
 );
 CREATE INDEX IF NOT EXISTS idx_comentarios_tarefa ON comentarios(tarefa_id);
 
+-- 9) troca de senha derruba as sessoes abertas ------------------------
+ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_versao INT NOT NULL DEFAULT 0;
+
 COMMIT;
