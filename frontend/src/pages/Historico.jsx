@@ -23,6 +23,7 @@ const META = {
   logout: { ico: '⇱', cor: 'var(--muted)', rot: 'Saída (logout)' },
   login_falha: { ico: '!', cor: 'var(--st-atrasada)', rot: 'Senha errada' },
   login_bloqueio: { ico: '⊘', cor: 'var(--st-atrasada)', rot: 'Bloqueio' },
+  senha_vista: { ico: '⚿', cor: 'var(--st-retrabalho)', rot: 'Senha aberta (cofre)' },
 };
 
 // "Tipo" = o que foi afetado. Vem do backend no campo entidade.
@@ -32,9 +33,25 @@ const ENTIDADES = {
   usuario: 'Usuários',
   setor: 'Setores',
   sessao: 'Acessos',
+  evento: 'Calendário',
+  briefing: 'Briefings',
+  prompt: 'Prompts',
+  acesso: 'Cofre',
 };
 
-const F_VAZIO = { entidade: '', usuario: '', setor: '', tipo: '', de: '', ate: '', q: '' };
+// Filtros rapidos: o servidor traduz cada um em tipo/acao (vale com a paginacao)
+const CATEGORIAS = [
+  ['', 'Registros: todos'],
+  ['tarefas', 'Só tarefas'],
+  ['acessos', 'Acessos e logins'],
+  ['falhas', 'Tentativas de login falhas'],
+  ['bloqueios', 'Bloqueios'],
+  ['cofre', 'Cofre de acessos'],
+];
+
+const PRIORIDADE_ROT = { urgente: 'Urgente', alta: 'Alta', normal: 'Normal', baixa: 'Baixa' };
+
+const F_VAZIO = { categoria: '', entidade: '', setor: '', tipo: '', cliente: '', responsavel: '', prioridade: '', de: '', ate: '', q: '' };
 
 // data completa para o painel de detalhes (dd/mm/aaaa hh:mm:ss)
 function dataCompleta(iso) {
@@ -59,7 +76,11 @@ function navegadorCurto(ua) {
 
 function montarBusca(f, extras = {}) {
   const p = new URLSearchParams();
+  if (f.categoria) p.set('categoria', f.categoria);
   if (f.entidade) p.set('entidade', f.entidade);
+  if (f.cliente) p.set('cliente', f.cliente);
+  if (f.responsavel) p.set('responsavel', f.responsavel);
+  if (f.prioridade) p.set('prioridade', f.prioridade);
   if (f.tipo) p.set('tipo', f.tipo);
   if (f.setor) p.set('setor', f.setor);
   if (f.de) p.set('de', f.de);
@@ -143,6 +164,9 @@ export default function Historico() {
         </span>
         <input className="bf-sel" type="search" placeholder="Buscar (tarefa, pessoa, detalhe, IP)..."
           value={busca} onChange={(e) => setBusca(e.target.value)} />
+        <select className="bf-sel" value={f.categoria} onChange={(e) => set('categoria', e.target.value)}>
+          {CATEGORIAS.map(([k, rot]) => <option key={k || 'tudo'} value={k}>{rot}</option>)}
+        </select>
         <select className="bf-sel" value={f.entidade} onChange={(e) => set('entidade', e.target.value)}>
           <option value="">Tipo: todos</option>
           {(opcoes?.entidades || []).map((k) => <option key={k} value={k}>{ENTIDADES[k] || k}</option>)}
@@ -154,6 +178,18 @@ export default function Historico() {
         <select className="bf-sel" value={f.setor} onChange={(e) => set('setor', e.target.value)}>
           <option value="">Setor: todos</option>
           {(opcoes?.setores || []).map((id) => <option key={id} value={id}>{setorNome(id)}</option>)}
+        </select>
+        <select className="bf-sel" value={f.cliente} onChange={(e) => set('cliente', e.target.value)}>
+          <option value="">Cliente: todos</option>
+          {(opcoes?.clientes || []).map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select className="bf-sel" value={f.responsavel} onChange={(e) => set('responsavel', e.target.value)}>
+          <option value="">Responsável: todos</option>
+          {(opcoes?.responsaveis || []).map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+        <select className="bf-sel" value={f.prioridade} onChange={(e) => set('prioridade', e.target.value)}>
+          <option value="">Prioridade: todas</option>
+          {(opcoes?.prioridades || []).map((p) => <option key={p} value={p}>{PRIORIDADE_ROT[p] || p}</option>)}
         </select>
         <label className="bf-data-wrap">De <input type="date" className="bf-data" value={f.de} onChange={(e) => set('de', e.target.value)} /></label>
         <label className="bf-data-wrap">Até <input type="date" className="bf-data" value={f.ate} onChange={(e) => set('ate', e.target.value)} /></label>
@@ -282,6 +318,7 @@ function PainelDetalhe({ evento, setorNome, onFechar, onAbrirTarefa }) {
           <Linha rot="Setor">{evento.setor_id ? setorNome(evento.setor_id) : ''}</Linha>
           <Linha rot="Cliente">{evento.cliente_nome}</Linha>
           <Linha rot="Responsáveis">{resp}</Linha>
+          <Linha rot="Prioridade">{PRIORIDADE_ROT[evento.prioridade] || ''}</Linha>
           <Linha rot="Identificador">{`#${evento.id}`}</Linha>
         </div>
 

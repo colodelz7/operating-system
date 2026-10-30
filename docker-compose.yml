@@ -31,6 +31,12 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
       GEMINI_MODEL_RESERVA: ${GEMINI_MODEL_RESERVA:-}
+      # Cofre de acessos (senhas cifradas). Vazio = cofre desligado.
+      COFRE_CHAVE: ${COFRE_CHAVE:-}
+      # Push no aparelho. Vazio = push desligado.
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       LOGIN_BLOQUEIO_TENTATIVAS: ${LOGIN_BLOQUEIO_TENTATIVAS:-3}
       LOGIN_BLOQUEIO_MS: ${LOGIN_BLOQUEIO_MS:-300000}
     # So espera o banco quando o profile "pg" esta ativo (required: false
@@ -53,6 +59,8 @@ services:
   web:
     build:
       context: ./frontend
+      args:
+        VITE_SISTEMAS: ${VITE_SISTEMAS:-}
     container_name: operacional-web
     restart: unless-stopped
     depends_on:

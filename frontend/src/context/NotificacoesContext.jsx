@@ -57,6 +57,13 @@ export function NotificacoesProvider({ children }) {
 
     es.addEventListener('pronto', () => { setAoVivo(true); desligarReserva(); });
     es.addEventListener('atualizar', () => { recarregar(); });
+    // o chat usa o mesmo canal: repassa para quem estiver ouvindo (ChatContext
+    // e a tela do chat), sem abrir uma segunda conexão
+    es.addEventListener('chat', (e) => {
+      let dados = {};
+      try { dados = JSON.parse(e.data); } catch (_) { /* aviso sem corpo */ }
+      window.dispatchEvent(new CustomEvent('colodel:chat', { detail: dados }));
+    });
     es.addEventListener('error', () => {
       // o navegador tenta reconectar sozinho; enquanto isso, consulta periódica
       setAoVivo(false);

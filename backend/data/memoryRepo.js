@@ -25,6 +25,17 @@ const db = {
   comentarios: [],
   historico: [],
   bloqueios: new Map(),
+  eventos: [],
+  chatConversas: [],
+  chatMembros: [],     // { conversa_id, usuario_id, ultima_lida_id }
+  chatMensagens: [],
+  textos: [],          // prompts (equipe) e mensagens salvas (pessoais)
+  briefings: [],
+  briefingArquivos: [],
+  acessos: [],
+  push: [],
+  clienteServicos: [],
+  clienteDatas: [],
 };
 
 const nextId = (arr) => (arr.reduce((m, x) => Math.max(m, x.id), 0) + 1);
@@ -44,7 +55,61 @@ function usuarioPublico(u) {
     colunas_visiveis: Array.isArray(u.colunas_visiveis) ? u.colunas_visiveis.slice() : null,
     ativo: u.ativo !== false,
     pode_clientes: !!u.pode_clientes,
+    avatar_path: u.avatar_path || null,
   };
+}
+// cliente com os servicos contratados e as datas importantes
+function montaCliente(c) {
+  return {
+    ...clone(c),
+    servicos: db.clienteServicos.filter((s) => s.cliente_id === c.id)
+      .sort((a, b) => a.nome.localeCompare(b.nome)).map((s) => ({ id: s.id, nome: s.nome })),
+    datas: db.clienteDatas.filter((d) => d.cliente_id === c.id)
+      .sort((a, b) => (a.mes - b.mes) || (a.dia - b.dia)).map((d) => ({ id: d.id, mes: d.mes, dia: d.dia, nome: d.nome })),
+  };
+}
+// so o que qualquer colega pode ver de outra pessoa
+function pessoa(uid) {
+  const u = db.usuarios.find((x) => x.id === uid);
+  return u ? { id: u.id, nome: u.nome, avatar_path: u.avatar_path || null } : null;
+}
+function montaEvento(e) {
+  const setor = e.setor_id ? db.setores.find((s) => s.id === e.setor_id) : null;
+  const autor = db.usuarios.find((u) => u.id === e.criado_por);
+  return {
+    ...clone(e),
+    participantes: e.participantes.map(pessoa).filter(Boolean),
+    setor_nome: setor ? setor.nome : null,
+    criado_por_nome: autor ? autor.nome : '',
+  };
+}
+function montaMensagem(m) {
+  const u = db.usuarios.find((x) => x.id === m.usuario_id);
+  return { ...clone(m), usuario_nome: u ? u.nome : 'Usuário removido' };
+}
+function montaConversa(c, uid) {
+  const membros = db.chatMembros.filter((m) => m.conversa_id === c.id);
+  const msgs = db.chatMensagens.filter((m) => m.conversa_id === c.id);
+  const ultima = msgs.length ? msgs[msgs.length - 1] : null;
+  const eu = membros.find((m) => m.usuario_id === uid);
+  const lidaAte = eu ? eu.ultima_lida_id : 0;
+  return {
+    ...clone(c),
+    membros: membros.map((m) => pessoa(m.usuario_id)).filter(Boolean),
+    ultima_mensagem: ultima ? montaMensagem(ultima) : null,
+    nao_lidas: msgs.filter((m) => m.id > lidaAte && m.usuario_id !== uid).length,
+  };
+}
+function montaBriefing(b) {
+  const cli = b.cliente_id ? db.clientes.find((c) => c.id === b.cliente_id) : null;
+  const autor = db.usuarios.find((u) => u.id === (b.atualizado_por || b.criado_por));
+  return { ...clone(b), cliente_nome: cli ? cli.empresa : null, atualizado_por_nome: autor ? autor.nome : '' };
+}
+// o cofre nunca devolve a senha cifrada junto com o resto: so diz se tem
+function montaAcesso(a) {
+  const cli = a.cliente_id ? db.clientes.find((c) => c.id === a.cliente_id) : null;
+  const { senha_cifrada, ...resto } = clone(a);
+  return { ...resto, tem_senha: !!senha_cifrada, cliente_nome: cli ? cli.empresa : null };
 }
 // resolve nomes de coluna -> ids dentro de um setor
 function idsDasColunas(setorId, nomes) {
@@ -194,7 +259,8 @@ module.exports = {
     return { id: u.id, nome: u.nome, usuario: u.usuario, papel: u.papel,
              senha_versao: u.senha_versao || 0,
              setor_id: u.setor_id, setor_slug: s ? s.slug : null, setor_nome: s ? s.nome : null,
-             ativo: u.ativo !== false, pode_clientes: !!u.pode_clientes };
+             ativo: u.ativo !== false, pode_clientes: !!u.pode_clientes,
+             avatar_path: u.avatar_path || null };
   },
   async listarUsuariosDoSetor(setorId) {
     return db.usuarios.filter((u) => u.setor_id === setorId && u.ativo !== false)
@@ -245,6 +311,11 @@ module.exports = {
     db.usuarios.splice(i, 1);
     // remove o usuario de qualquer tarefa em que era responsavel
     db.tarefas.forEach((t) => { t.responsaveis = t.responsaveis.filter((r) => r !== id); });
+    // mesmas cascatas do Postgres
+    db.eventos.forEach((e) => { e.participantes = e.participantes.filter((p) => p !== id); });
+    db.chatMembros = db.chatMembros.filter((m) => m.usuario_id !== id);
+    db.textos = db.textos.filter((t) => !(t.tipo === 'mensagem' && t.usuario_id === id));
+    db.push = db.push.filter((p) => p.usuario_id !== id);
     return true;
   },
 
@@ -269,21 +340,57 @@ module.exports = {
 
   // ---------------- CLIENTES ----------------
   async listarClientes() {
-    return db.clientes.slice().sort((a, b) => a.empresa.localeCompare(b.empresa)).map(clone);
+    return db.clientes.slice().sort((a, b) => a.empresa.localeCompare(b.empresa)).map(montaCliente);
   },
   async buscarCliente(id) {
-    const c = db.clientes.find((x) => x.id === id); return c ? clone(c) : null;
+    const c = db.clientes.find((x) => x.id === id); return c ? montaCliente(c) : null;
   },
   async criarCliente(dados) {
-    const novo = { id: nextId(db.clientes), ...dados }; db.clientes.push(novo); return clone(novo);
+    const novo = { id: nextId(db.clientes), ...dados }; db.clientes.push(novo); return montaCliente(novo);
   },
   async atualizarCliente(id, dados) {
     const c = db.clientes.find((x) => x.id === id); if (!c) return null;
-    Object.assign(c, dados); return clone(c);
+    Object.assign(c, dados); return montaCliente(c);
   },
   async excluirCliente(id) {
     const i = db.clientes.findIndex((x) => x.id === id); if (i === -1) return false;
-    db.clientes.splice(i, 1); return true;
+    db.clientes.splice(i, 1);
+    db.clienteServicos = db.clienteServicos.filter((s) => s.cliente_id !== id);
+    db.clienteDatas = db.clienteDatas.filter((d) => d.cliente_id !== id);
+    return true;
+  },
+
+  // servicos contratados (nome unico por cliente, sem diferenciar maiuscula)
+  async criarServicoCliente(clienteId, nome) {
+    const existe = db.clienteServicos.some((s) => s.cliente_id === clienteId && s.nome.toLowerCase() === nome.toLowerCase());
+    if (existe) return null;
+    const s = { id: nextId(db.clienteServicos), cliente_id: clienteId, nome };
+    db.clienteServicos.push(s);
+    return { id: s.id, nome: s.nome };
+  },
+  async excluirServicoCliente(clienteId, servicoId) {
+    const antes = db.clienteServicos.length;
+    db.clienteServicos = db.clienteServicos.filter((s) => !(s.id === servicoId && s.cliente_id === clienteId));
+    return db.clienteServicos.length < antes;
+  },
+  // datas importantes (repetem todo ano)
+  async criarDataCliente(clienteId, d) {
+    const nova = { id: nextId(db.clienteDatas), cliente_id: clienteId, mes: d.mes, dia: d.dia, nome: d.nome };
+    db.clienteDatas.push(nova);
+    return { id: nova.id, mes: nova.mes, dia: nova.dia, nome: nova.nome };
+  },
+  async excluirDataCliente(clienteId, dataId) {
+    const antes = db.clienteDatas.length;
+    db.clienteDatas = db.clienteDatas.filter((d) => !(d.id === dataId && d.cliente_id === clienteId));
+    return db.clienteDatas.length < antes;
+  },
+  async listarDatasDeClientes() {
+    return db.clienteDatas
+      .map((d) => {
+        const c = db.clientes.find((x) => x.id === d.cliente_id);
+        return { id: d.id, cliente_id: d.cliente_id, cliente_nome: c ? c.empresa : '', mes: d.mes, dia: d.dia, nome: d.nome };
+      })
+      .sort((a, b) => (a.mes - b.mes) || (a.dia - b.dia));
   },
 
   // ---------------- TAREFAS ----------------
@@ -426,17 +533,20 @@ module.exports = {
       usuario_nome: dados.usuario_nome || '', detalhe: dados.detalhe || '',
       cliente_id: dados.cliente_id || null, cliente_nome: dados.cliente_nome || '',
       responsaveis: Array.isArray(dados.responsaveis) ? dados.responsaveis : [],
+      prioridade: dados.prioridade || '',
       ip: dados.ip || '', user_agent: dados.user_agent || '',
       criado_em: new Date().toISOString(),
     };
     db.historico.push(h);
     return clone(h);
   },
-  // Filtros aceitos: setorId, entidade, tipo, usuarioId, de/ate (YYYY-MM-DD),
+  // Filtros aceitos: setorId, entidade, tipo, tipos (lista), usuarioId,
+  // clienteNome, responsavelNome, prioridade, de/ate (YYYY-MM-DD),
   // q (busca livre em titulo, autor, cliente, detalhe e IP) e limit.
   async listarHistorico(filtros = {}) {
-    const { limit = 300, setorId = null, entidade = null, tipo = null,
-            usuarioId = null, de = null, ate = null, q = null, antesDe = null } = filtros;
+    const { limit = 300, setorId = null, entidade = null, tipo = null, tipos = null,
+            usuarioId = null, clienteNome = null, responsavelNome = null, prioridade = null,
+            de = null, ate = null, q = null, antesDe = null } = filtros;
     const busca = q ? String(q).toLowerCase() : null;
 
     let l = db.historico.slice().sort((a, b) => b.id - a.id);
@@ -445,7 +555,11 @@ module.exports = {
     if (setorId != null) l = l.filter((h) => h.setor_id === Number(setorId));
     if (entidade) l = l.filter((h) => (h.entidade || 'tarefa') === entidade);
     if (tipo) l = l.filter((h) => h.tipo === tipo);
+    if (Array.isArray(tipos) && tipos.length) l = l.filter((h) => tipos.includes(h.tipo));
     if (usuarioId != null) l = l.filter((h) => h.usuario_id === Number(usuarioId));
+    if (clienteNome) l = l.filter((h) => h.cliente_nome === clienteNome);
+    if (responsavelNome) l = l.filter((h) => (h.responsaveis || []).some((r) => r && r.nome === responsavelNome));
+    if (prioridade) l = l.filter((h) => h.prioridade === prioridade);
     if (de) l = l.filter((h) => (h.criado_em || '').slice(0, 10) >= de);
     if (ate) l = l.filter((h) => (h.criado_em || '').slice(0, 10) <= ate);
     if (busca) {
@@ -462,6 +576,9 @@ module.exports = {
       pessoas: distintos((h) => h.usuario_nome).sort((a, b) => String(a).localeCompare(String(b))),
       clientes: distintos((h) => h.cliente_nome).sort((a, b) => String(a).localeCompare(String(b))),
       setores: distintos((h) => h.setor_id).sort((a, b) => a - b),
+      responsaveis: Array.from(new Set(db.historico.flatMap((h) => (h.responsaveis || []).map((r) => r && r.nome))
+        .filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b))),
+      prioridades: distintos((h) => h.prioridade).sort(),
       entidades: distintos((h) => h.entidade || 'tarefa').sort(),
       tipos: distintos((h) => h.tipo).sort(),
       total: db.historico.length,
@@ -529,5 +646,321 @@ module.exports = {
       if (setorId == null || n.setor_id === setorId || n.setor_id == null) n.lida = true;
     });
     return true;
+  },
+
+  // ---------------- EQUIPE / FOTO DE PERFIL ----------------
+  // Lista de colegas que qualquer pessoa logada pode ver (sem login nem papel).
+  async listarEquipe() {
+    return db.usuarios.filter((u) => u.ativo !== false)
+      .sort((a, b) => a.nome.localeCompare(b.nome))
+      .map((u) => {
+        const s = db.setores.find((x) => x.id === u.setor_id);
+        return { id: u.id, nome: u.nome, setor_id: u.setor_id, setor_nome: s ? s.nome : null,
+                 avatar_path: u.avatar_path || null };
+      });
+  },
+  // devolve o arquivo anterior, para quem chamou apagar do disco
+  async definirAvatar(usuarioId, caminho) {
+    const u = db.usuarios.find((x) => x.id === usuarioId);
+    if (!u) return null;
+    const anterior = u.avatar_path || null;
+    u.avatar_path = caminho || null;
+    return { anterior };
+  },
+
+  // ---------------- CALENDARIO DA EQUIPE ----------------
+  // Quem pode ver o que e decidido na rota; aqui so o recorte por data.
+  async listarEventos({ de = null, ate = null } = {}) {
+    return db.eventos
+      .filter((e) => (!de || e.data >= de) && (!ate || e.data <= ate))
+      .sort((a, b) => (a.data.localeCompare(b.data)) || String(a.hora_inicio || '').localeCompare(String(b.hora_inicio || '')) || a.id - b.id)
+      .map(montaEvento);
+  },
+  async buscarEvento(id) {
+    const e = db.eventos.find((x) => x.id === id);
+    return e ? montaEvento(e) : null;
+  },
+  async criarEvento(d) {
+    const agora = new Date().toISOString();
+    const e = {
+      id: nextId(db.eventos), titulo: d.titulo, descricao: d.descricao || '', data: d.data,
+      hora_inicio: d.hora_inicio || null, hora_fim: d.hora_fim || null, local: d.local || '',
+      setor_id: d.setor_id || null, criado_por: d.criado_por || null,
+      participantes: Array.isArray(d.participantes) ? d.participantes.slice() : [],
+      criado_em: agora, atualizado_em: agora,
+    };
+    db.eventos.push(e);
+    return montaEvento(e);
+  },
+  async atualizarEvento(id, d) {
+    const e = db.eventos.find((x) => x.id === id);
+    if (!e) return null;
+    ['titulo', 'descricao', 'data', 'hora_inicio', 'hora_fim', 'local', 'setor_id']
+      .forEach((k) => { if (k in d) e[k] = d[k]; });
+    if (Array.isArray(d.participantes)) e.participantes = d.participantes.slice();
+    e.atualizado_em = new Date().toISOString();
+    return montaEvento(e);
+  },
+  async excluirEvento(id) {
+    const i = db.eventos.findIndex((x) => x.id === id);
+    if (i === -1) return false;
+    db.eventos.splice(i, 1);
+    return true;
+  },
+
+  // ---------------- CHAT ----------------
+  async listarConversasDoUsuario(uid) {
+    const ids = new Set(db.chatMembros.filter((m) => m.usuario_id === uid).map((m) => m.conversa_id));
+    return db.chatConversas.filter((c) => ids.has(c.id))
+      .sort((a, b) => String(b.atualizado_em).localeCompare(String(a.atualizado_em)) || b.id - a.id)
+      .map((c) => montaConversa(c, uid));
+  },
+  async buscarConversa(id, uid = null) {
+    const c = db.chatConversas.find((x) => x.id === id);
+    return c ? montaConversa(c, uid) : null;
+  },
+  async buscarConversaDireta(uidA, uidB) {
+    const c = db.chatConversas.find((x) => {
+      if (x.tipo !== 'direta') return false;
+      const ids = db.chatMembros.filter((m) => m.conversa_id === x.id).map((m) => m.usuario_id).sort();
+      const alvo = [uidA, uidB].sort();
+      return ids.length === 2 && ids[0] === alvo[0] && ids[1] === alvo[1];
+    });
+    return c ? montaConversa(c, uidA) : null;
+  },
+  async criarConversa(d) {
+    const agora = new Date().toISOString();
+    const c = { id: nextId(db.chatConversas), tipo: d.tipo, nome: d.nome || '',
+                criado_por: d.criado_por || null, criado_em: agora, atualizado_em: agora };
+    db.chatConversas.push(c);
+    Array.from(new Set(d.membros || [])).forEach((uid) => {
+      db.chatMembros.push({ conversa_id: c.id, usuario_id: uid, ultima_lida_id: 0 });
+    });
+    return montaConversa(c, d.criado_por);
+  },
+  // membros: lista completa nova (quem continua guarda ate onde ja leu)
+  async atualizarConversa(id, d) {
+    const c = db.chatConversas.find((x) => x.id === id);
+    if (!c) return null;
+    if ('nome' in d) c.nome = d.nome;
+    if (Array.isArray(d.membros)) {
+      const novos = new Set(d.membros);
+      db.chatMembros = db.chatMembros.filter((m) => m.conversa_id !== id || novos.has(m.usuario_id));
+      novos.forEach((uid) => {
+        if (!db.chatMembros.some((m) => m.conversa_id === id && m.usuario_id === uid)) {
+          db.chatMembros.push({ conversa_id: id, usuario_id: uid, ultima_lida_id: 0 });
+        }
+      });
+    }
+    return montaConversa(c, null);
+  },
+  async removerMembroConversa(id, uid) {
+    const antes = db.chatMembros.length;
+    db.chatMembros = db.chatMembros.filter((m) => !(m.conversa_id === id && m.usuario_id === uid));
+    return db.chatMembros.length < antes;
+  },
+  // devolve os arquivos anexados, para quem chamou apagar do disco
+  async excluirConversa(id) {
+    const i = db.chatConversas.findIndex((x) => x.id === id);
+    if (i === -1) return null;
+    db.chatConversas.splice(i, 1);
+    const arquivos = db.chatMensagens.filter((m) => m.conversa_id === id && m.anexo_arquivo).map((m) => m.anexo_arquivo);
+    db.chatMensagens = db.chatMensagens.filter((m) => m.conversa_id !== id);
+    db.chatMembros = db.chatMembros.filter((m) => m.conversa_id !== id);
+    return { arquivos };
+  },
+  // mais novas primeiro; antesDe = cursor para buscar as mais antigas
+  async listarMensagens(conversaId, { antesDe = null, limit = 50 } = {}) {
+    return db.chatMensagens
+      .filter((m) => m.conversa_id === conversaId && (antesDe == null || m.id < Number(antesDe)))
+      .sort((a, b) => b.id - a.id)
+      .slice(0, limit)
+      .map(montaMensagem);
+  },
+  async criarMensagem(d) {
+    const m = {
+      id: nextId(db.chatMensagens), conversa_id: d.conversa_id, usuario_id: d.usuario_id,
+      texto: d.texto || '', anexo_nome_original: d.anexo_nome_original || null,
+      anexo_arquivo: d.anexo_arquivo || null, anexo_mime: d.anexo_mime || null,
+      anexo_tamanho: d.anexo_tamanho || null, criado_em: new Date().toISOString(),
+    };
+    db.chatMensagens.push(m);
+    const c = db.chatConversas.find((x) => x.id === d.conversa_id);
+    if (c) c.atualizado_em = m.criado_em;
+    // quem escreveu ja leu ate a propria mensagem
+    const eu = db.chatMembros.find((x) => x.conversa_id === d.conversa_id && x.usuario_id === d.usuario_id);
+    if (eu) eu.ultima_lida_id = m.id;
+    return montaMensagem(m);
+  },
+  async buscarMensagem(id) {
+    const m = db.chatMensagens.find((x) => x.id === id);
+    return m ? montaMensagem(m) : null;
+  },
+  async marcarConversaLida(conversaId, uid, ateId) {
+    const eu = db.chatMembros.find((x) => x.conversa_id === conversaId && x.usuario_id === uid);
+    if (!eu) return false;
+    // so avanca: uma aba velha nao "desle" o que outra aba ja leu
+    eu.ultima_lida_id = Math.max(eu.ultima_lida_id, Number(ateId) || 0);
+    return true;
+  },
+  async contarChatNaoLidas(uid) {
+    return db.chatMembros.filter((m) => m.usuario_id === uid)
+      .reduce((tot, m) => tot + db.chatMensagens.filter((x) => x.conversa_id === m.conversa_id
+        && x.id > m.ultima_lida_id && x.usuario_id !== uid).length, 0);
+  },
+
+  // ---------------- PROMPTS E MENSAGENS SALVAS ----------------
+  async listarTextos({ tipo, usuarioId = null }) {
+    return db.textos
+      .filter((t) => t.tipo === tipo && (usuarioId == null || t.usuario_id === usuarioId))
+      .sort((a, b) => a.titulo.localeCompare(b.titulo))
+      .map((t) => {
+        const u = db.usuarios.find((x) => x.id === t.usuario_id);
+        return { ...clone(t), autor_nome: u ? u.nome : '' };
+      });
+  },
+  async buscarTexto(id) {
+    const t = db.textos.find((x) => x.id === id);
+    return t ? clone(t) : null;
+  },
+  async criarTexto(d) {
+    const agora = new Date().toISOString();
+    const t = { id: nextId(db.textos), tipo: d.tipo, usuario_id: d.usuario_id || null,
+                titulo: d.titulo, conteudo: d.conteudo || '', criado_em: agora, atualizado_em: agora };
+    db.textos.push(t);
+    return clone(t);
+  },
+  async atualizarTexto(id, d) {
+    const t = db.textos.find((x) => x.id === id);
+    if (!t) return null;
+    if ('titulo' in d) t.titulo = d.titulo;
+    if ('conteudo' in d) t.conteudo = d.conteudo;
+    t.atualizado_em = new Date().toISOString();
+    return clone(t);
+  },
+  async excluirTexto(id) {
+    const i = db.textos.findIndex((x) => x.id === id);
+    if (i === -1) return false;
+    db.textos.splice(i, 1);
+    return true;
+  },
+
+  // ---------------- BRIEFINGS ----------------
+  async listarBriefings() {
+    return db.briefings.slice()
+      .sort((a, b) => String(b.atualizado_em).localeCompare(String(a.atualizado_em)))
+      .map(montaBriefing);
+  },
+  async buscarBriefing(id) {
+    const b = db.briefings.find((x) => x.id === id);
+    return b ? montaBriefing(b) : null;
+  },
+  async criarBriefing(d) {
+    const agora = new Date().toISOString();
+    const b = { id: nextId(db.briefings), cliente_id: d.cliente_id || null, empresa: d.empresa,
+                respostas: { ...(d.respostas || {}) }, criado_por: d.criado_por || null,
+                atualizado_por: d.criado_por || null, criado_em: agora, atualizado_em: agora };
+    db.briefings.push(b);
+    return montaBriefing(b);
+  },
+  async atualizarBriefing(id, d) {
+    const b = db.briefings.find((x) => x.id === id);
+    if (!b) return null;
+    ['cliente_id', 'empresa', 'atualizado_por'].forEach((k) => { if (k in d) b[k] = d[k]; });
+    if (d.respostas) b.respostas = { ...d.respostas };
+    b.atualizado_em = new Date().toISOString();
+    return montaBriefing(b);
+  },
+  // devolve os arquivos anexados, para quem chamou apagar do disco
+  async excluirBriefing(id) {
+    const i = db.briefings.findIndex((x) => x.id === id);
+    if (i === -1) return null;
+    db.briefings.splice(i, 1);
+    const arquivos = db.briefingArquivos.filter((a) => a.briefing_id === id).map((a) => a.nome_arquivo);
+    db.briefingArquivos = db.briefingArquivos.filter((a) => a.briefing_id !== id);
+    return { arquivos };
+  },
+  async listarArquivosBriefing(briefingId) {
+    return db.briefingArquivos.filter((a) => a.briefing_id === briefingId)
+      .sort((a, b) => a.id - b.id)
+      .map((a) => {
+        const u = db.usuarios.find((x) => x.id === a.enviado_por);
+        return { ...clone(a), enviado_por_nome: u ? u.nome : '' };
+      });
+  },
+  async criarArquivoBriefing(d) {
+    const a = { id: nextId(db.briefingArquivos), ...d, criado_em: new Date().toISOString() };
+    db.briefingArquivos.push(a);
+    return clone(a);
+  },
+  async buscarArquivoBriefing(id) {
+    const a = db.briefingArquivos.find((x) => x.id === id);
+    return a ? clone(a) : null;
+  },
+  async excluirArquivoBriefing(id) {
+    const i = db.briefingArquivos.findIndex((x) => x.id === id);
+    if (i === -1) return false;
+    db.briefingArquivos.splice(i, 1);
+    return true;
+  },
+
+  // ---------------- COFRE DE ACESSOS ----------------
+  async listarAcessos() {
+    return db.acessos.slice()
+      .sort((a, b) => {
+        const ca = (montaAcesso(a).cliente_nome || '').localeCompare(montaAcesso(b).cliente_nome || '');
+        return ca || a.servico.localeCompare(b.servico);
+      })
+      .map(montaAcesso);
+  },
+  async buscarAcesso(id) {
+    const a = db.acessos.find((x) => x.id === id);
+    return a ? montaAcesso(a) : null;
+  },
+  async lerSenhaCifrada(id) {
+    const a = db.acessos.find((x) => x.id === id);
+    return a ? (a.senha_cifrada || null) : null;
+  },
+  async criarAcesso(d) {
+    const agora = new Date().toISOString();
+    const a = { id: nextId(db.acessos), cliente_id: d.cliente_id || null, servico: d.servico,
+                url: d.url || '', login: d.login || '', senha_cifrada: d.senha_cifrada || null,
+                observacoes: d.observacoes || '', criado_por: d.criado_por || null,
+                criado_em: agora, atualizado_em: agora };
+    db.acessos.push(a);
+    return montaAcesso(a);
+  },
+  async atualizarAcesso(id, d) {
+    const a = db.acessos.find((x) => x.id === id);
+    if (!a) return null;
+    ['cliente_id', 'servico', 'url', 'login', 'senha_cifrada', 'observacoes']
+      .forEach((k) => { if (k in d) a[k] = d[k]; });
+    a.atualizado_em = new Date().toISOString();
+    return montaAcesso(a);
+  },
+  async excluirAcesso(id) {
+    const i = db.acessos.findIndex((x) => x.id === id);
+    if (i === -1) return false;
+    db.acessos.splice(i, 1);
+    return true;
+  },
+
+  // ---------------- PUSH ----------------
+  // O mesmo aparelho (endpoint) pode trocar de dono quando outra pessoa
+  // entra nele: a inscricao passa a ser de quem esta logado agora.
+  async salvarInscricaoPush(d) {
+    const atual = db.push.find((p) => p.endpoint === d.endpoint);
+    if (atual) Object.assign(atual, { usuario_id: d.usuario_id, p256dh: d.p256dh, auth: d.auth });
+    else db.push.push({ id: nextId(db.push), ...d, criado_em: new Date().toISOString() });
+    return true;
+  },
+  async removerInscricaoPush(endpoint, usuarioId = null) {
+    const antes = db.push.length;
+    db.push = db.push.filter((p) => !(p.endpoint === endpoint && (usuarioId == null || p.usuario_id === usuarioId)));
+    return db.push.length < antes;
+  },
+  async listarInscricoesPush(usuarioIds) {
+    const ids = new Set(usuarioIds || []);
+    return db.push.filter((p) => ids.has(p.usuario_id)).map(clone);
   },
 };

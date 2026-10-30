@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const multer = require('multer');
@@ -47,4 +48,21 @@ const upload = multer({
   limits: { fileSize: config.uploadMaxBytes }, // 25MB
 });
 
-module.exports = { upload, PASTA_UPLOADS, caminhoSeguro, extensaoSegura };
+// Foto de perfil: so imagem (nada de PDF/Office) e no maximo 3MB.
+const IMAGENS = ['image/png', 'image/jpeg', 'image/webp'];
+const uploadImagem = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (IMAGENS.includes(file.mimetype)) return cb(null, true);
+    cb(new Error('Tipo de arquivo não permitido'));
+  },
+  limits: { fileSize: config.avatarMaxBytes, files: 1 },
+});
+
+// Apaga um arquivo da pasta de uploads (melhor-esforco: some ou ja sumiu).
+function apagarArquivo(nomeArquivo) {
+  const destino = caminhoSeguro(nomeArquivo);
+  if (destino) fs.unlink(destino, () => {});
+}
+
+module.exports = { upload, uploadImagem, apagarArquivo, PASTA_UPLOADS, caminhoSeguro, extensaoSegura };

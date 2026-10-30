@@ -30,4 +30,24 @@ const assistenteRateLimit = rateLimit({
   message: { erro: 'Muitas mensagens seguidas para o assistente. Respire e tente de novo em um minuto.' },
 });
 
-module.exports = { loginRateLimit, assistenteRateLimit };
+// Chat: folga para conversa normal, trava quem dispara mensagem em loop.
+const chatRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => 'u' + ((req.session && req.session.usuarioId) || req.ip),
+  message: { erro: 'Muitas mensagens em sequência. Aguarde um instante.' },
+});
+
+// Cofre: revelar senha e coisa rara; muitas seguidas e sinal de raspagem.
+const cofreRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => 'u' + ((req.session && req.session.usuarioId) || req.ip),
+  message: { erro: 'Muitas senhas abertas em pouco tempo. Aguarde alguns minutos.' },
+});
+
+module.exports = { loginRateLimit, assistenteRateLimit, chatRateLimit, cofreRateLimit };

@@ -73,6 +73,21 @@ router.get('/historico', exigirLogin, exigirAdmin, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+// GET /api/tarefas/recorrentes?setor=ID   -> tem que vir ANTES de /:id
+// As series ativas: a ocorrencia mais recente de cada tarefa que repete.
+// Mexer nela (frequencia, limite, parar) vale para as proximas.
+router.get('/recorrentes', exigirLogin, async (req, res, next) => {
+  try {
+    const setorId = v.inteiroOuNull(req.query.setor);
+    if (setorId && !podeAcessarSetor(req.usuario, setorId)) {
+      return res.status(403).json({ erro: 'Sem acesso a este setor' });
+    }
+    const todas = await repo.listarTarefasRecorrentesPendentes();
+    const tarefas = todas.filter((t) => (setorId ? t.setor_id === setorId : podeAcessarSetor(req.usuario, t.setor_id)));
+    res.json({ tarefas });
+  } catch (e) { next(e); }
+});
+
 // GET /api/tarefas/:id
 router.get('/:id', exigirLogin, async (req, res, next) => {
   try {
@@ -133,7 +148,7 @@ router.post('/', exigirLogin, validate(criarTarefaSchema), async (req, res, next
       tipo: 'criada', tarefa_id: nova.id, titulo: nova.titulo, setor_id: setorId,
       usuario_id: req.usuario.id, usuario_nome: req.usuario.nome,
       cliente_id: nova.cliente_id, cliente_nome: nova.cliente_nome,
-      responsaveis: nova.responsaveis || [],
+      responsaveis: nova.responsaveis || [], prioridade: nova.prioridade,
       detalhe: `criou a tarefa${nova.cliente_nome ? ' (' + nova.cliente_nome + ')' : ''}`,
     });
 
@@ -169,7 +184,7 @@ router.put('/:id', exigirLogin, validate(atualizarTarefaSchema), async (req, res
     await registrar(req, {
       tipo: 'editada', tarefa_id: t.id, titulo: t.titulo, setor_id: t.setor_id,
       usuario_id: req.usuario.id, usuario_nome: req.usuario.nome,
-      cliente_id: t.cliente_id, cliente_nome: t.cliente_nome, responsaveis: t.responsaveis || [],
+      cliente_id: t.cliente_id, cliente_nome: t.cliente_nome, responsaveis: t.responsaveis || [], prioridade: t.prioridade,
       detalhe: 'editou a tarefa',
     });
     res.json({ tarefa: t });
@@ -212,7 +227,7 @@ router.patch('/:id/mover', exigirLogin, validate(moverTarefaSchema), async (req,
       tarefa_id: resultado.tarefa.id, titulo: resultado.tarefa.titulo, setor_id: resultado.tarefa.setor_id,
       usuario_id: req.usuario.id, usuario_nome: req.usuario.nome,
       cliente_id: resultado.tarefa.cliente_id, cliente_nome: resultado.tarefa.cliente_nome,
-      responsaveis: resultado.tarefa.responsaveis || [],
+      responsaveis: resultado.tarefa.responsaveis || [], prioridade: resultado.tarefa.prioridade,
       detalhe: resultado.concluiuAgora ? 'concluiu a tarefa' : `moveu para "${resultado.tarefa.coluna_nome}"`,
     });
 
@@ -229,7 +244,7 @@ router.delete('/:id', exigirLogin, exigirAdmin, async (req, res, next) => {
     await registrar(req, {
       tipo: 'excluida', tarefa_id: atual.id, titulo: atual.titulo, setor_id: atual.setor_id,
       usuario_id: req.usuario.id, usuario_nome: req.usuario.nome,
-      cliente_id: atual.cliente_id, cliente_nome: atual.cliente_nome, responsaveis: atual.responsaveis || [],
+      cliente_id: atual.cliente_id, cliente_nome: atual.cliente_nome, responsaveis: atual.responsaveis || [], prioridade: atual.prioridade,
       detalhe: 'excluiu a tarefa',
     });
     res.json({ ok: true });
@@ -269,7 +284,7 @@ router.post('/:id/duplicar', exigirLogin, async (req, res, next) => {
     await registrar(req, {
       tipo: 'criada', tarefa_id: nova.id, titulo: nova.titulo, setor_id: nova.setor_id,
       cliente_id: nova.cliente_id, cliente_nome: nova.cliente_nome,
-      responsaveis: nova.responsaveis || [],
+      responsaveis: nova.responsaveis || [], prioridade: nova.prioridade,
       detalhe: `duplicou a tarefa #${origem.id}`,
     });
 

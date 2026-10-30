@@ -35,7 +35,7 @@ export function AuthProvider({ children }) {
   const ehCriativo = usuario ? (usuario.setor_slug === 'criativo' || usuario.setor_nome === 'Criativo') : false;
 
   return (
-    <AuthCtx.Provider value={{ usuario, carregando, ehAdmin, ehCriativo, login, logout }}>
+    <AuthCtx.Provider value={{ usuario, carregando, ehAdmin, ehCriativo, login, logout, recarregarUsuario: carregarMe }}>
       {children}
     </AuthCtx.Provider>
   );

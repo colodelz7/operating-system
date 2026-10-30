@@ -75,6 +75,14 @@ app.use('/api/anexos',        require('./routes/anexos'));
 app.use('/api/historico',     require('./routes/historico'));
 app.use('/api/resumo-dia',    require('./routes/resumo'));
 app.use('/api/assistente',    require('./routes/assistente'));
+app.use('/api/equipe',        require('./routes/equipe'));
+app.use('/api/eventos',       require('./routes/eventos'));
+app.use('/api/chat',          require('./routes/chat'));
+app.use('/api/prompts',       require('./routes/textos')('prompt'));
+app.use('/api/mensagens-salvas', require('./routes/textos')('mensagem'));
+app.use('/api/briefings',     require('./routes/briefings'));
+app.use('/api/acessos',       require('./routes/acessos'));
+app.use('/api/push',          require('./routes/push'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true, modo: repo.modo }));
 
@@ -91,7 +99,7 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ erro: err.message });
   }
   if (err && err.code === 'LIMIT_FILE_SIZE') {
-    return res.status(413).json({ erro: 'Arquivo excede o limite de 25MB' });
+    return res.status(413).json({ erro: 'Arquivo excede o limite (25MB para anexos, 3MB para foto de perfil)' });
   }
   if (err && (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE')) {
     return res.status(400).json({ erro: 'Envie um arquivo por vez, no campo esperado' });

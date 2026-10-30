@@ -11,12 +11,9 @@ export const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho'
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 export const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-// Padrao da equipe: agenda combinada da equipe. Quem quiser troca pelo
-// botao "Trocar calendario" (cada instalacao configura a sua).
-export const GCAL_KEY = 'colodel-gcal-embed';
-// Vazio por padrao: configure com o link de "Incorporar" do Google Calendar
-// da sua equipe (botao "Trocar calendário" na tela do Calendário).
-export const GCAL_DEFAULT = '';
+export const RECORRENCIAS = {
+  diaria: 'Todo dia', semanal: 'Toda semana', quinzenal: 'A cada duas semanas', mensal: 'Todo mês',
+};
 
 // Datas comemorativas de marketing 2026 (curadoria). alta = grande valor comercial.
 export const DATAS_2026 = [

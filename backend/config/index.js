@@ -115,8 +115,28 @@ const config = {
   // nao pode ser forjado por um cliente.
   tokenInterno: require('crypto').randomBytes(24).toString('hex'),
 
+  // ------------------------------------------------------------
+  //  NOTIFICACOES PUSH (celular/computador, mesmo com a aba fechada)
+  // ------------------------------------------------------------
+  // Par de chaves VAPID. Sem elas o push fica desligado e o resto do sistema
+  // segue normal. Gere com:  npx web-push generate-vapid-keys
+  vapidPublica: (process.env.VAPID_PUBLIC_KEY || '').trim(),
+  vapidPrivada: (process.env.VAPID_PRIVATE_KEY || '').trim(),
+  // contato do responsavel pelo servidor (exigido pelos servicos de push)
+  vapidContato: (process.env.VAPID_SUBJECT || 'mailto:admin@localhost').trim(),
+
+  // ------------------------------------------------------------
+  //  COFRE DE ACESSOS
+  // ------------------------------------------------------------
+  // Chave de 32 bytes (base64) que cifra as senhas guardadas. Sem ela o cofre
+  // fica desligado. Trocar a chave torna ilegiveis as senhas ja guardadas.
+  // Gere com:  node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+  cofreChave: (process.env.COFRE_CHAVE || '').trim(),
+
   // Limite de upload: 25MB (conforme combinado)
   uploadMaxBytes: 25 * 1024 * 1024,
+  // Foto de perfil: so imagem e bem menor
+  avatarMaxBytes: 3 * 1024 * 1024,
   // Origens extras aceitas nas escritas (checagem anti-CSRF). Por padrao
   // basta ser o mesmo host da requisicao; aqui entram casos como um dominio
   // diferente do proxy. Lista separada por virgula.

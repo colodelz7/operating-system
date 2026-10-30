@@ -8,8 +8,12 @@ const TITULOS = {
   visao: 'Visão geral', kanban: 'Kanban', calendario: 'Calendário',
   clientes: 'Clientes', 'calendario-equipe': 'Calendário da Equipe',
   datas: 'Datas Comemorativas', historico: 'Histórico', usuarios: 'Usuários',
+  chat: 'Chat', briefing: 'Briefing', prompts: 'Prompts', mensagens: 'Mensagens',
+  acessos: 'Cofre de acessos',
 };
-const SEM_NOVA = ['clientes', 'calendario-equipe', 'datas', 'historico', 'usuarios'];
+// telas que nao sao de tarefas: sem botao "Nova tarefa" e sem nome de setor
+const SEM_NOVA = ['clientes', 'calendario-equipe', 'datas', 'historico', 'usuarios',
+  'chat', 'briefing', 'prompts', 'mensagens', 'acessos'];
 
 export default function Topbar({ mostrarMenu, onAbrirMenu, onToggleTema, onToggleSino }) {
   const loc = useLocation();
@@ -20,10 +24,9 @@ export default function Topbar({ mostrarMenu, onAbrirMenu, onToggleTema, onToggl
 
   const setorNome = setorAtivoObj ? setorAtivoObj.nome : '';
   const contexto =
-    view === 'clientes' ? ''
-    : view === 'calendario-equipe' ? 'Agenda compartilhada de todos os setores'
+    view === 'calendario-equipe' ? 'Agenda interna da equipe'
     : view === 'datas' ? 'Calendário de marketing 2026'
-    : view === 'historico' ? ''
+    : SEM_NOVA.includes(view) ? ''
     : view === 'visao' ? (ehAdmin ? 'Painel de controle' : setorNome)
     : setorNome;
 

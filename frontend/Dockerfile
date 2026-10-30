@@ -8,6 +8,10 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
+# atalhos do lancador "Trocar de sistema" (JSON, ver frontend/.env.example).
+# O Vite grava isso no bundle na hora do build.
+ARG VITE_SISTEMAS=""
+ENV VITE_SISTEMAS=$VITE_SISTEMAS
 RUN npm run build
 
 FROM nginx:alpine

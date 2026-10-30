@@ -9,6 +9,12 @@
  */
 
 const assert = require('assert');
+// o cofre precisa de chave; nos testes, uma aleatoria por execucao
+process.env.COFRE_CHAVE = process.env.COFRE_CHAVE || require('crypto').randomBytes(32).toString('base64');
+// push sempre desligado nos testes (mesmo com chaves no .env): nada sai para
+// servicos de push de verdade. Vazio aqui vale: o dotenv nao sobrescreve.
+process.env.VAPID_PUBLIC_KEY = '';
+process.env.VAPID_PRIVATE_KEY = '';
 const { iniciar } = require('../server');
 const ferramentas = require('../services/assistente/ferramentas');
 const { sweepRecorrencias } = require('../services/recorrencia');
@@ -608,6 +614,315 @@ function ok(nome, cond) {
     await bloqueioLogin.limpar(IP_ATACANTE, 'admin');
     st = await bloqueioLogin.estado(IP_ATACANTE, 'admin');
     ok('acertar a senha limpa a contagem daquela origem', st.bloqueado === false);
+
+    // =================================================================
+    //  v0.4: historico com filtros rapidos, calendario interno, equipe,
+    //  chat, prompts, mensagens salvas, briefing, cofre, push, recorrentes
+    // =================================================================
+    const sessaoMembro = criarCliente();
+    await sessaoMembro('POST', '/api/auth/login', { usuario: 'morning', senha: SENHA });
+    const adm = criarCliente();
+    await adm('POST', '/api/auth/login', { usuario: 'admin', senha: SENHA });
+    // terceira pessoa, de outro setor (Comercial)
+    r = await adm('POST', '/api/usuarios', { nome: 'Pessoa Comercial', usuario: 'comercialteste', senha: 'senha123', setor_id: 2, papel: 'membro' });
+    const idComercial = r.dados.usuario.id;
+    const comercial = criarCliente();
+    await comercial('POST', '/api/auth/login', { usuario: 'comercialteste', senha: 'senha123' });
+    const idMorning = (await sessaoMembro('GET', '/api/auth/me')).dados.usuario.id;
+    const idAdmin = (await adm('GET', '/api/auth/me')).dados.usuario.id;
+    const admO = comOverride(adm);
+    const membroO = comOverride(sessaoMembro);
+    const comercialO = comOverride(comercial);
+
+    // multipart com a sessao do cliente (o mini cliente so manda JSON)
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
+    async function enviarArquivo(cli, url, campo, conteudo, tipo, nome, extras = {}) {
+      const fd = new FormData();
+      Object.entries(extras).forEach(([k, val]) => fd.append(k, val));
+      fd.append(campo, new Blob([conteudo], { type: tipo }), nome);
+      const resp = await fetch(BASE + url, { method: 'POST', headers: { Cookie: cli.cookie }, body: fd });
+      let dados = null; try { dados = await resp.json(); } catch (_) {}
+      return { status: resp.status, dados, headers: resp.headers };
+    }
+
+    // ---- HISTORICO: filtros rapidos, prioridade, cliente, responsavel ----
+    const clientes = (await adm('GET', '/api/clientes')).dados.clientes;
+    r = await adm('POST', '/api/tarefas', {
+      setor_id: 3, titulo: 'Tarefa alta para filtro', prioridade: 'alta',
+      cliente_id: clientes[0] ? clientes[0].id : null, responsaveis: [idMorning],
+    });
+    const idTarefaAlta = r.dados.tarefa.id;
+    r = await adm('GET', '/api/historico?prioridade=alta');
+    ok('historico filtra por prioridade (gravada no evento da tarefa)',
+      r.status === 200 && r.dados.historico.length > 0 && r.dados.historico.every((h) => h.prioridade === 'alta'));
+    r = await adm('GET', '/api/historico?categoria=acessos');
+    ok('filtro rapido "acessos" traz so login, falha, bloqueio e logout',
+      r.dados.historico.length > 0
+      && r.dados.historico.every((h) => ['login', 'login_falha', 'login_bloqueio', 'logout'].includes(h.tipo)));
+    r = await adm('GET', '/api/historico?categoria=falhas');
+    ok('filtro rapido "falhas" traz so senha errada',
+      r.dados.historico.length > 0 && r.dados.historico.every((h) => h.tipo === 'login_falha'));
+    r = await adm('GET', '/api/historico?categoria=tarefas&entidade=cliente');
+    ok('categoria e tipo conflitantes nao trazem nada', r.status === 200 && r.dados.historico.length === 0);
+    r = await adm('GET', '/api/historico?responsavel=Morning');
+    ok('historico filtra por responsavel',
+      r.dados.historico.length > 0 && r.dados.historico.every((h) => (h.responsaveis || []).some((x) => x.nome === 'Morning')));
+    if (clientes[0]) {
+      r = await adm('GET', `/api/historico?cliente=${encodeURIComponent(clientes[0].empresa)}`);
+      ok('historico filtra por cliente',
+        r.dados.historico.length > 0 && r.dados.historico.every((h) => h.cliente_nome === clientes[0].empresa));
+    }
+    r = await adm('GET', '/api/historico/opcoes');
+    ok('opcoes do historico trazem responsaveis e prioridades',
+      r.dados.responsaveis.includes('Morning') && r.dados.prioridades.includes('alta'));
+
+    // ---- EQUIPE E FOTO DE PERFIL ----
+    r = await sessaoMembro('GET', '/api/equipe');
+    ok('equipe visivel para membro, sem login nem papel',
+      r.status === 200 && r.dados.equipe.some((u) => u.id === idAdmin)
+      && r.dados.equipe.every((u) => !('usuario' in u) && !('papel' in u) && !('senha_hash' in u)));
+    r = await enviarArquivo(sessaoMembro, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'eu.png');
+    ok('foto de perfil aceita PNG de verdade', r.status === 200 && !!r.dados.avatar_path);
+    const fotoResp = await fetch(`${BASE}/api/equipe/${idMorning}/avatar`, { headers: { Cookie: comercial.cookie } });
+    ok('colega ve a foto de perfil', fotoResp.status === 200 && /image\/png/.test(fotoResp.headers.get('content-type') || ''));
+    r = await enviarArquivo(sessaoMembro, '/api/equipe/eu/avatar', 'foto', Buffer.from('<script>alert(1)</script>'), 'image/png', 'x.png');
+    ok('foto com conteudo falso (nao e PNG) -> 400', r.status === 400);
+    r = await enviarArquivo(sessaoMembro, '/api/equipe/eu/avatar', 'foto', Buffer.from('%PDF-1.4'), 'application/pdf', 'x.pdf');
+    ok('foto de perfil nao aceita PDF -> 400', r.status === 400);
+    r = await sessaoMembro('GET', '/api/auth/me');
+    ok('/me traz a foto da pessoa', !!r.dados.usuario.avatar_path);
+
+    // ---- CALENDARIO DA EQUIPE ----
+    r = await sessaoMembro('POST', '/api/eventos', {
+      titulo: 'Reunião de pauta', data: '2026-11-10', hora_inicio: '14:00', hora_fim: '15:00',
+      participantes: [idAdmin, 999999],
+    });
+    const idEventoMembro = r.dados && r.dados.evento && r.dados.evento.id;
+    ok('membro cria evento da equipe toda (participante inexistente e ignorado)',
+      r.status === 201 && r.dados.evento.participantes.length === 1 && r.dados.evento.participantes[0].id === idAdmin);
+    r = await sessaoMembro('POST', '/api/eventos', { titulo: 'X', data: '2026-11-10', setor_id: 2 });
+    ok('membro nao cria evento de outro setor -> 403', r.status === 403);
+    r = await sessaoMembro('POST', '/api/eventos', { titulo: 'X', data: '2026-11-10', hora_inicio: '15:00', hora_fim: '14:00' });
+    ok('termino antes do inicio -> 400', r.status === 400);
+    r = await sessaoMembro('POST', '/api/eventos', { titulo: 'X', data: '10/11/2026' });
+    ok('data em formato errado -> 400', r.status === 400);
+    r = await adm('POST', '/api/eventos', { titulo: 'Visita comercial', data: '2026-11-12', setor_id: 2 });
+    const idEventoComercial = r.dados.evento.id;
+    r = await sessaoMembro('GET', '/api/eventos?de=2026-11-01&ate=2026-11-30');
+    ok('membro ve o evento geral e nao ve o de outro setor',
+      r.dados.eventos.some((e) => e.id === idEventoMembro) && !r.dados.eventos.some((e) => e.id === idEventoComercial));
+    r = await comercial('GET', '/api/eventos?de=2026-11-01&ate=2026-11-30');
+    ok('pessoa do setor ve o evento do proprio setor', r.dados.eventos.some((e) => e.id === idEventoComercial));
+    r = await sessaoMembro('GET', `/api/eventos/${idEventoComercial}`);
+    ok('evento de outro setor nem aparece por id -> 404', r.status === 404);
+    r = await comercialO('PUT', `/api/eventos/${idEventoMembro}`, { titulo: 'Mudei' });
+    ok('so quem criou (ou admin) edita o evento -> 403', r.status === 403);
+    r = await admO('PUT', `/api/eventos/${idEventoMembro}`, { hora_fim: '13:00' });
+    ok('edicao parcial que deixa o fim antes do inicio -> 400', r.status === 400);
+    r = await membroO('PUT', `/api/eventos/${idEventoMembro}`, { local: 'Sala 2', participantes: [idAdmin, idComercial] });
+    ok('quem criou edita local e participantes', r.status === 200 && r.dados.evento.local === 'Sala 2'
+      && r.dados.evento.participantes.length === 2);
+    r = await comercial('GET', `/api/eventos/${idEventoMembro}`);
+    ok('participante passa a ver o evento', r.status === 200);
+    r = await adm('GET', '/api/historico?entidade=evento');
+    ok('eventos entram na trilha de auditoria', r.dados.historico.some((h) => h.tipo === 'criada'));
+    r = await membroO('DELETE', `/api/eventos/${idEventoMembro}`);
+    ok('quem criou exclui o evento', r.status === 200);
+
+    // ---- CHAT ----
+    r = await sessaoMembro('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idComercial });
+    const idDireta = r.dados.conversa.id;
+    ok('abre conversa direta', r.status === 201 && r.dados.conversa.membros.length === 2);
+    r = await comercial('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idMorning });
+    ok('conversa direta e unica por par (reaproveita a existente)', r.status === 200 && r.dados.conversa.id === idDireta);
+    r = await sessaoMembro('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idMorning });
+    ok('nao abre conversa consigo mesmo -> 400', r.status === 400);
+    r = await sessaoMembro('POST', `/api/chat/conversas/${idDireta}/mensagens`, { texto: 'Oi, tudo bem?' });
+    ok('envia mensagem', r.status === 201 && r.dados.mensagem.texto === 'Oi, tudo bem?');
+    r = await sessaoMembro('POST', `/api/chat/conversas/${idDireta}/mensagens`, { texto: '   ' });
+    ok('mensagem vazia -> 400', r.status === 400);
+    r = await comercial('GET', '/api/chat/resumo');
+    ok('destinatario ve 1 nao lida', r.dados.nao_lidas === 1);
+    r = await sessaoMembro('GET', '/api/chat/resumo');
+    ok('quem escreveu nao conta a propria mensagem como nao lida', r.dados.nao_lidas === 0);
+    r = await adm('GET', `/api/chat/conversas/${idDireta}/mensagens`);
+    ok('admin nao le conversa de que nao participa -> 404', r.status === 404);
+    r = await comercial('GET', `/api/chat/conversas/${idDireta}/mensagens`);
+    const msgs = r.dados.mensagens;
+    ok('membro le as mensagens em ordem', r.status === 200 && msgs.length === 1 && msgs[0].usuario_nome === 'Morning');
+    await comercial('POST', `/api/chat/conversas/${idDireta}/lida`, { ate_id: msgs[0].id });
+    r = await comercial('GET', '/api/chat/resumo');
+    ok('marcar como lida zera o contador', r.dados.nao_lidas === 0);
+    r = await enviarArquivo(sessaoMembro, `/api/chat/conversas/${idDireta}/mensagens`, 'arquivo', PNG, 'image/png', 'print.png', { texto: 'segue o print' });
+    ok('envia imagem no chat', r.status === 201 && r.dados.mensagem.anexo_nome_original === 'print.png');
+    const idMsgAnexo = r.dados.mensagem.id;
+    let resp = await fetch(`${BASE}/api/chat/anexos/${idMsgAnexo}`, { headers: { Cookie: comercial.cookie } });
+    ok('membro abre o anexo do chat', resp.status === 200 && /inline/.test(resp.headers.get('content-disposition') || ''));
+    resp = await fetch(`${BASE}/api/chat/anexos/${idMsgAnexo}`, { headers: { Cookie: adm.cookie } });
+    ok('quem nao e membro nao baixa o anexo -> 404', resp.status === 404);
+    r = await enviarArquivo(adm, `/api/chat/conversas/${idDireta}/mensagens`, 'arquivo', PNG, 'image/png', 'intruso.png');
+    ok('quem nao e membro nao envia arquivo -> 404', r.status === 404);
+
+    r = await adm('POST', '/api/chat/conversas', { tipo: 'grupo', nome: 'Pauta da semana', membros: [idMorning, 999999] });
+    const idGrupo = r.dados.conversa.id;
+    ok('cria grupo (ignora quem nao existe; criador entra sozinho)',
+      r.status === 201 && r.dados.conversa.membros.length === 2);
+    r = await adm('POST', '/api/chat/conversas', { tipo: 'grupo', nome: '' });
+    ok('grupo sem nome -> 400', r.status === 400);
+    r = await membroO('PUT', `/api/chat/conversas/${idGrupo}`, { nome: 'Renomeado' });
+    ok('so quem criou o grupo (ou admin) renomeia -> 403', r.status === 403);
+    r = await sessaoMembro('GET', '/api/chat/conversas');
+    ok('lista de conversas traz o grupo e a direta', r.dados.conversas.some((c) => c.id === idGrupo)
+      && r.dados.conversas.some((c) => c.id === idDireta));
+    r = await sessaoMembro('POST', `/api/chat/conversas/${idGrupo}/sair`);
+    ok('membro sai do grupo', r.status === 200);
+    r = await sessaoMembro('GET', `/api/chat/conversas/${idGrupo}/mensagens`);
+    ok('depois de sair, nao le mais o grupo -> 404', r.status === 404);
+    r = await admO('DELETE', `/api/chat/conversas/${idGrupo}`);
+    ok('criador apaga o grupo', r.status === 200);
+
+    // ---- PROMPTS (equipe) E MENSAGENS SALVAS (pessoais) ----
+    r = await sessaoMembro('POST', '/api/prompts', { titulo: 'Legenda de carrossel', conteudo: 'Escreva uma legenda...' });
+    const idPrompt = r.dados.item.id;
+    ok('membro cria prompt', r.status === 201);
+    r = await comercial('GET', '/api/prompts');
+    ok('prompt aparece para a equipe toda', r.dados.itens.some((p) => p.id === idPrompt && p.autor_nome === 'Morning'));
+    r = await comercialO('PUT', `/api/prompts/${idPrompt}`, { titulo: 'Mexi', conteudo: '' });
+    ok('outro membro nao edita prompt alheio -> 403', r.status === 403);
+    r = await admO('PUT', `/api/prompts/${idPrompt}`, { titulo: 'Legenda (revisado)', conteudo: 'ok' });
+    ok('admin edita qualquer prompt', r.status === 200 && r.dados.item.titulo === 'Legenda (revisado)');
+    r = await sessaoMembro('POST', '/api/mensagens-salvas', { titulo: 'Resposta de orçamento', conteudo: 'Olá! Segue...' });
+    const idMsgSalva = r.dados.item.id;
+    r = await comercial('GET', '/api/mensagens-salvas');
+    ok('mensagem salva e pessoal: o colega nao ve', !r.dados.itens.some((m) => m.id === idMsgSalva));
+    r = await adm('GET', '/api/mensagens-salvas');
+    ok('nem o admin ve a mensagem salva de outra pessoa', !r.dados.itens.some((m) => m.id === idMsgSalva));
+    r = await comercialO('DELETE', `/api/mensagens-salvas/${idMsgSalva}`);
+    ok('colega nao apaga mensagem salva alheia -> 404', r.status === 404);
+    r = await sessaoMembro('GET', '/api/mensagens-salvas');
+    ok('o dono ve a propria mensagem salva', r.dados.itens.some((m) => m.id === idMsgSalva));
+
+    // ---- BRIEFING ----
+    r = await sessaoMembro('GET', '/api/briefings/campos');
+    ok('perguntas do briefing vem do servidor', r.status === 200 && r.dados.campos.length > 0);
+    r = await sessaoMembro('POST', '/api/briefings', {
+      empresa: 'Padaria Exemplo', respostas: { nome_fantasia: 'Padaria Exemplo', cores: 'Amarelo', chave_inventada: 'x' },
+    });
+    const idBriefing = r.dados.briefing.id;
+    ok('briefing guarda so as perguntas conhecidas',
+      r.status === 201 && r.dados.briefing.respostas.cores === 'Amarelo' && !('chave_inventada' in r.dados.briefing.respostas));
+    r = await comercial('GET', '/api/briefings');
+    ok('lista de briefings mostra o progresso', r.dados.briefings.some((b) => b.id === idBriefing && b.preenchidos === 2));
+    r = await comercialO('DELETE', `/api/briefings/${idBriefing}`);
+    ok('so quem criou (ou admin) exclui briefing -> 403', r.status === 403);
+    r = await sessaoMembro('POST', '/api/briefings', { empresa: 'X', cliente_id: 999999 });
+    ok('briefing com cliente inexistente -> 400', r.status === 400);
+
+    r = await enviarArquivo(sessaoMembro, `/api/briefings/${idBriefing}/arquivos`, 'arquivo', PNG, 'image/png', 'logo.png');
+    ok('briefing aceita arquivo', r.status === 201 && r.dados.arquivo.nome_original === 'logo.png');
+    const idArqBriefing = r.dados.arquivo.id;
+    r = await enviarArquivo(sessaoMembro, `/api/briefings/${idBriefing}/arquivos`, 'arquivo', Buffer.from('MZ executavel'), 'image/png', 'virus.png');
+    ok('arquivo do briefing com conteudo falso -> 400', r.status === 400);
+    r = await comercial('GET', `/api/briefings/${idBriefing}/arquivos`);
+    ok('equipe ve os arquivos do briefing', r.dados.arquivos.length === 1 && r.dados.arquivos[0].enviado_por_nome === 'Morning');
+    resp = await fetch(`${BASE}/api/briefings/arquivos/${idArqBriefing}`, { headers: { Cookie: comercial.cookie } });
+    ok('arquivo do briefing abre', resp.status === 200 && /image\/png/.test(resp.headers.get('content-type') || ''));
+    r = await comercialO('DELETE', `/api/briefings/arquivos/${idArqBriefing}`);
+    ok('quem nao enviou nem criou nao apaga arquivo do briefing -> 403', r.status === 403);
+    r = await membroO('DELETE', `/api/briefings/${idBriefing}`);
+    ok('quem criou exclui o briefing (com os arquivos)', r.status === 200);
+    r = await sessaoMembro('GET', `/api/briefings/${idBriefing}/arquivos`);
+    ok('arquivos somem junto com o briefing', r.status === 404);
+
+    // ---- SERVICOS E DATAS DO CLIENTE ----
+    const idCli = clientes[0].id;
+    r = await adm('POST', `/api/clientes/${idCli}/servicos`, { nome: 'SEO' });
+    const idServ = r.dados.servico && r.dados.servico.id;
+    ok('adiciona servico ao cliente', r.status === 201 && r.dados.servico.nome === 'SEO');
+    r = await adm('POST', `/api/clientes/${idCli}/servicos`, { nome: 'seo' });
+    ok('servico repetido (sem diferenciar maiuscula) -> 409', r.status === 409);
+    r = await sessaoMembro('POST', `/api/clientes/${idCli}/servicos`, { nome: 'Branding' });
+    ok('sem permissao de clientes nao adiciona servico -> 403', r.status === 403);
+    r = await adm('POST', `/api/clientes/${idCli}/datas`, { data: '2026-13-01', nome: 'X' });
+    ok('mes 13 -> 400', r.status === 400);
+    r = await adm('POST', `/api/clientes/${idCli}/datas`, { data: '2026-04-31', nome: 'X' });
+    ok('31/04 -> 400', r.status === 400);
+    r = await adm('POST', `/api/clientes/${idCli}/datas`, { data: '2026-08-15', nome: 'Aniversário da empresa' });
+    const idDataCli = r.dados.data.id;
+    ok('adiciona data importante (dia e mes)', r.status === 201 && r.dados.data.mes === 8 && r.dados.data.dia === 15);
+    r = await sessaoMembro('GET', `/api/clientes/${idCli}`);
+    ok('ficha do cliente traz servicos e datas', r.dados.cliente.servicos.some((s) => s.id === idServ)
+      && r.dados.cliente.datas.some((d) => d.id === idDataCli));
+    r = await sessaoMembro('GET', '/api/clientes/datas');
+    ok('lista geral de datas traz o nome do cliente', r.status === 200
+      && r.dados.datas.some((d) => d.id === idDataCli && d.cliente_nome === clientes[0].empresa));
+    r = await admO('DELETE', `/api/clientes/${idCli}/servicos/${idServ}`);
+    ok('remove servico', r.status === 200);
+    r = await admO('DELETE', `/api/clientes/${idCli}/datas/${idDataCli}`);
+    ok('remove data', r.status === 200);
+    r = await admO('DELETE', `/api/clientes/${idCli}/datas/${idDataCli}`);
+    ok('remover de novo -> 404', r.status === 404);
+
+    // ---- PREVIA DE ANEXO DENTRO DO SISTEMA ----
+    r = await adm('POST', '/api/tarefas', { setor_id: 3, titulo: 'Tarefa com PDF' });
+    const idTarefaPdf = r.dados.tarefa.id;
+    r = await enviarArquivo(adm, `/api/tarefas/${idTarefaPdf}/anexos`, 'arquivo', Buffer.from('%PDF-1.4\n%fim'), 'application/pdf', 'proposta.pdf');
+    const idAnexoPdf = r.dados && r.dados.anexo && r.dados.anexo.id;
+    resp = await fetch(`${BASE}/api/anexos/${idAnexoPdf}/preview`, { headers: { Cookie: adm.cookie } });
+    const cspPrevia = resp.headers.get('content-security-policy') || '';
+    ok('previa de PDF pode abrir no iframe do proprio sistema (e so dele)',
+      resp.status === 200 && resp.headers.get('x-frame-options') === 'SAMEORIGIN'
+      && /frame-ancestors 'self'/.test(cspPrevia) && !/sandbox/.test(cspPrevia));
+    resp = await fetch(`${BASE}/api/anexos/${idAnexoPdf}`, { headers: { Cookie: adm.cookie } });
+    ok('o resto da API continua sem poder ir para iframe', resp.headers.get('x-frame-options') === 'DENY');
+    await admO('DELETE', `/api/tarefas/${idTarefaPdf}`);
+
+    // ---- COFRE DE ACESSOS ----
+    r = await sessaoMembro('GET', '/api/acessos');
+    ok('membro nao entra no cofre -> 403', r.status === 403);
+    r = await adm('POST', '/api/acessos', {
+      servico: 'Hospedagem', login: 'cliente@exemplo.com', senha: 'S3nha-Super-Secreta', url: 'javascript:alert(1)',
+    });
+    const idAcesso = r.dados.acesso.id;
+    ok('admin guarda acesso; a resposta nao traz a senha',
+      r.status === 201 && r.dados.acesso.tem_senha === true
+      && !JSON.stringify(r.dados).includes('S3nha-Super-Secreta') && !('senha_cifrada' in r.dados.acesso));
+    ok('url perigosa (javascript:) e descartada', r.dados.acesso.url === '');
+    r = await adm('GET', '/api/acessos');
+    ok('listagem do cofre nunca traz senha', r.status === 200 && !JSON.stringify(r.dados).includes('S3nha-Super-Secreta')
+      && !JSON.stringify(r.dados).includes('senha_cifrada'));
+    r = await adm('POST', `/api/acessos/${idAcesso}/revelar`);
+    ok('revelar devolve a senha decifrada', r.status === 200 && r.dados.senha === 'S3nha-Super-Secreta');
+    r = await adm('GET', '/api/historico?categoria=cofre');
+    ok('senha revelada fica registrada na trilha', r.dados.historico.some((h) => h.tipo === 'senha_vista' && h.entidade_id === idAcesso));
+    r = await admO('PUT', `/api/acessos/${idAcesso}`, { senha: '' });
+    ok('senha vazia apaga a senha guardada', r.status === 200 && r.dados.acesso.tem_senha === false);
+    r = await admO('DELETE', `/api/acessos/${idAcesso}`);
+    ok('admin exclui acesso do cofre', r.status === 200);
+
+    // ---- PUSH ----
+    r = await sessaoMembro('GET', '/api/push/vapid');
+    ok('sem chaves VAPID o push fica desligado (chave null)', r.status === 200 && r.dados.chave === null);
+    r = await sessaoMembro('POST', '/api/push/inscrever', {
+      subscription: { endpoint: 'https://127.0.0.1/interno', keys: { p256dh: 'abc', auth: 'def' } },
+    });
+    ok('inscricao com endereco que nao e servico de push -> 400 (sem SSRF)', r.status === 400);
+    r = await sessaoMembro('POST', '/api/push/inscrever', {
+      subscription: { endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'abc', auth: 'def' } },
+    });
+    ok('inscricao valida com push desligado -> 503', r.status === 503);
+
+    // ---- RECORRENTES ----
+    r = await adm('POST', '/api/tarefas', { setor_id: 3, titulo: 'Relatório semanal', recorrencia: 'semanal', data_entrega: '2026-11-06' });
+    const idRecorrente = r.dados.tarefa.id;
+    r = await sessaoMembro('GET', '/api/tarefas/recorrentes');
+    ok('membro ve as series recorrentes do proprio setor', r.status === 200 && r.dados.tarefas.some((t) => t.id === idRecorrente));
+    r = await comercial('GET', '/api/tarefas/recorrentes');
+    ok('outro setor nao ve a serie', !r.dados.tarefas.some((t) => t.id === idRecorrente));
+    r = await comercial('GET', '/api/tarefas/recorrentes?setor=3');
+    ok('pedir setor alheio -> 403', r.status === 403);
+    await admO('DELETE', `/api/tarefas/${idRecorrente}`);
+    await admO('DELETE', `/api/tarefas/${idTarefaAlta}`);
 
     // ---- TEMPO DE RESPOSTA DO LOGIN ----
     // Conta inexistente precisa custar o mesmo que conta real, senao o

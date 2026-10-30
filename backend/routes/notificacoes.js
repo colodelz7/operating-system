@@ -61,12 +61,21 @@ router.get('/stream', (req, res) => {
   };
   barramento.on('notificacao', aoNotificar);
 
+  // chat: o mesmo canal leva o aviso de mensagem nova, só para quem é membro
+  const meuId = req.usuario.id;
+  const aoChat = (info) => {
+    if (!info.membros.includes(meuId)) return;
+    enviar('chat', { conversa_id: info.conversa_id, mensagem_id: info.mensagem_id });
+  };
+  barramento.on('chat', aoChat);
+
   // ping para o proxy não derrubar a conexão por ociosidade
   const ping = setInterval(() => enviar('ping', { t: Date.now() }), 25000);
 
   const encerrar = () => {
     clearInterval(ping);
     barramento.off('notificacao', aoNotificar);
+    barramento.off('chat', aoChat);
     res.end();
   };
   req.on('close', encerrar);

@@ -57,6 +57,14 @@ router.get('/:id/preview', exigirLogin, async (req, res, next) => {
       return res.status(415).json({ erro: 'Este tipo de arquivo não tem pré-visualização' });
     }
 
+    // A API inteira responde "nunca me coloque num iframe" (DENY e
+    // frame-ancestors 'none'), o que barrava a previa de PDF da propria tela.
+    // Aqui libera so para o proprio sistema (mesma origem). O "sandbox" fica
+    // para imagem; o leitor de PDF do navegador nao abre em frame com sandbox.
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('Content-Security-Policy', mime === 'application/pdf'
+      ? "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; frame-ancestors 'self'"
+      : "default-src 'none'; img-src 'self' data:; frame-ancestors 'self'; sandbox");
     res.setHeader('Content-Type', mime);
     // nome entre aspas e sem quebra de linha: cabecalho nao aceita
     const nome = String(ok.anexo.nome_original || 'arquivo').replace(/["\r\n]/g, '');

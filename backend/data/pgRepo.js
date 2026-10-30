@@ -117,6 +117,79 @@ async function setColunasVisiveis(usuarioId, ids) {
   }
 }
 
+// cliente com os servicos contratados e as datas importantes
+const CLIENTE_SELECT = `
+  SELECT c.*,
+         COALESCE((SELECT json_agg(json_build_object('id', s.id, 'nome', s.nome) ORDER BY s.nome)
+                     FROM cliente_servicos s WHERE s.cliente_id = c.id), '[]') AS servicos,
+         COALESCE((SELECT json_agg(json_build_object('id', d.id, 'mes', d.mes, 'dia', d.dia, 'nome', d.nome)
+                                   ORDER BY d.mes, d.dia)
+                     FROM cliente_datas d WHERE d.cliente_id = c.id), '[]') AS datas
+    FROM clientes c
+`;
+
+// evento com setor, autor e participantes (so o que um colega pode ver)
+const EVENTO_SELECT = `
+  SELECT e.*, s.nome AS setor_nome, COALESCE(u.nome, '') AS criado_por_nome,
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', p.id, 'nome', p.nome, 'avatar_path', p.avatar_path) ORDER BY p.nome)
+              FROM evento_participantes ep JOIN usuarios p ON p.id = ep.usuario_id
+             WHERE ep.evento_id = e.id), '[]'
+         ) AS participantes
+    FROM eventos e
+    LEFT JOIN setores s ON s.id = e.setor_id
+    LEFT JOIN usuarios u ON u.id = e.criado_por
+`;
+
+async function setParticipantes(eventoId, ids) {
+  await q('DELETE FROM evento_participantes WHERE evento_id = $1', [eventoId]);
+  for (const uid of new Set(ids || [])) {
+    await q('INSERT INTO evento_participantes (evento_id, usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [eventoId, uid]);
+  }
+}
+
+// conversa vista por $1 (nao_lidas depende de quem pergunta; $1 pode ser null)
+const CONVERSA_SELECT = `
+  SELECT c.*,
+         COALESCE(
+           (SELECT json_agg(json_build_object('id', u.id, 'nome', u.nome, 'avatar_path', u.avatar_path) ORDER BY u.nome)
+              FROM chat_membros m JOIN usuarios u ON u.id = m.usuario_id
+             WHERE m.conversa_id = c.id), '[]'
+         ) AS membros,
+         (SELECT row_to_json(x) FROM (
+            SELECT mm.*, COALESCE(uu.nome, 'Usuário removido') AS usuario_nome
+              FROM chat_mensagens mm LEFT JOIN usuarios uu ON uu.id = mm.usuario_id
+             WHERE mm.conversa_id = c.id
+             ORDER BY mm.id DESC LIMIT 1) x
+         ) AS ultima_mensagem,
+         (SELECT count(*)::int FROM chat_mensagens mm
+           WHERE mm.conversa_id = c.id
+             AND mm.id > COALESCE((SELECT ultima_lida_id FROM chat_membros
+                                    WHERE conversa_id = c.id AND usuario_id = $1::int), 0)
+             AND mm.usuario_id IS DISTINCT FROM $1::int) AS nao_lidas
+    FROM chat_conversas c
+`;
+
+const MENSAGEM_SELECT = `
+  SELECT mm.*, COALESCE(u.nome, 'Usuário removido') AS usuario_nome
+    FROM chat_mensagens mm LEFT JOIN usuarios u ON u.id = mm.usuario_id
+`;
+
+const BRIEFING_SELECT = `
+  SELECT b.*, c.empresa AS cliente_nome, COALESCE(u.nome, '') AS atualizado_por_nome
+    FROM briefings b
+    LEFT JOIN clientes c ON c.id = b.cliente_id
+    LEFT JOIN usuarios u ON u.id = COALESCE(b.atualizado_por, b.criado_por)
+`;
+
+// o cofre nunca devolve a senha cifrada junto com o resto: so diz se tem
+const ACESSO_SELECT = `
+  SELECT a.id, a.cliente_id, a.servico, a.url, a.login, a.observacoes,
+         a.criado_por, a.criado_em, a.atualizado_em,
+         (a.senha_cifrada IS NOT NULL) AS tem_senha, c.empresa AS cliente_nome
+    FROM acessos a LEFT JOIN clientes c ON c.id = a.cliente_id
+`;
+
 module.exports = {
   modo: 'postgres',
 
@@ -132,7 +205,7 @@ module.exports = {
   async buscarUsuarioPorId(id) {
     const r = await q(
       `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
-              u.senha_versao, s.slug AS setor_slug, s.nome AS setor_nome
+              u.senha_versao, u.avatar_path, s.slug AS setor_slug, s.nome AS setor_nome
          FROM usuarios u JOIN setores s ON s.id = u.setor_id
         WHERE u.id = $1`, [id]);
     return r.rows[0] || null;
@@ -146,7 +219,7 @@ module.exports = {
   async buscarUsuarioPublico(id) {
     const r = await q(
       `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
-              s.slug AS setor_slug, s.nome AS setor_nome,
+              u.avatar_path, s.slug AS setor_slug, s.nome AS setor_nome,
               COALESCE((SELECT json_agg(uc.coluna_id)
                           FROM usuario_colunas uc WHERE uc.usuario_id = u.id), '[]') AS colunas_visiveis
          FROM usuarios u JOIN setores s ON s.id = u.setor_id
@@ -159,7 +232,7 @@ module.exports = {
   async listarUsuarios() {
     const r = await q(
       `SELECT u.id, u.nome, u.usuario, u.papel, u.setor_id, u.ativo, u.pode_clientes,
-              s.slug AS setor_slug, s.nome AS setor_nome,
+              u.avatar_path, s.slug AS setor_slug, s.nome AS setor_nome,
               COALESCE((SELECT json_agg(uc.coluna_id)
                           FROM usuario_colunas uc WHERE uc.usuario_id = u.id), '[]') AS colunas_visiveis
          FROM usuarios u JOIN setores s ON s.id = u.setor_id
@@ -192,7 +265,7 @@ module.exports = {
       const extra = presentes.includes('senha_hash') ? ', senha_versao = senha_versao + 1' : '';
       const vals = presentes.map((c) => d[c]);
       vals.push(id);
-      await q(`UPDATE usuarios SET ${set}${extra} WHERE id = ${vals.length}`, vals);
+      await q(`UPDATE usuarios SET ${set}${extra} WHERE id = $${vals.length}`, vals);
     }
     if ('colunas_visiveis' in d) await setColunasVisiveis(id, d.colunas_visiveis);
     return this.buscarUsuarioPublico(id);
@@ -201,6 +274,8 @@ module.exports = {
     // preserva historico/tarefas: desvincula em vez de bloquear a exclusao
     await q('UPDATE tarefas SET criado_por = NULL WHERE criado_por = $1', [id]);
     await q('DELETE FROM comentarios WHERE usuario_id = $1', [id]);
+    // mensagens salvas sao pessoais: vao junto. Prompts ficam (sao da equipe).
+    await q("DELETE FROM textos_salvos WHERE tipo = 'mensagem' AND usuario_id = $1", [id]);
     const r = await q('DELETE FROM usuarios WHERE id = $1', [id]); // cascata em usuario_colunas e tarefa_responsaveis
     return r.rowCount > 0;
   },
@@ -229,20 +304,48 @@ module.exports = {
 
   // ---------------- CLIENTES ----------------
   async listarClientes() {
-    const r = await q('SELECT * FROM clientes ORDER BY empresa');
+    const r = await q(`${CLIENTE_SELECT} ORDER BY c.empresa`);
     return r.rows;
   },
   async buscarCliente(id) {
-    const r = await q('SELECT * FROM clientes WHERE id = $1', [id]);
+    const r = await q(`${CLIENTE_SELECT} WHERE c.id = $1`, [id]);
     return r.rows[0] || null;
+  },
+  async criarServicoCliente(clienteId, nome) {
+    // indice unico (cliente, lower(nome)): repetido nao entra e devolve null
+    const r = await q(
+      `INSERT INTO cliente_servicos (cliente_id, nome) VALUES ($1,$2)
+       ON CONFLICT DO NOTHING RETURNING id, nome`, [clienteId, nome]);
+    return r.rows[0] || null;
+  },
+  async excluirServicoCliente(clienteId, servicoId) {
+    const r = await q('DELETE FROM cliente_servicos WHERE id = $1 AND cliente_id = $2', [servicoId, clienteId]);
+    return r.rowCount > 0;
+  },
+  async criarDataCliente(clienteId, d) {
+    const r = await q(
+      'INSERT INTO cliente_datas (cliente_id, mes, dia, nome) VALUES ($1,$2,$3,$4) RETURNING id, mes, dia, nome',
+      [clienteId, d.mes, d.dia, d.nome]);
+    return r.rows[0];
+  },
+  async excluirDataCliente(clienteId, dataId) {
+    const r = await q('DELETE FROM cliente_datas WHERE id = $1 AND cliente_id = $2', [dataId, clienteId]);
+    return r.rowCount > 0;
+  },
+  async listarDatasDeClientes() {
+    const r = await q(
+      `SELECT d.id, d.cliente_id, c.empresa AS cliente_nome, d.mes, d.dia, d.nome
+         FROM cliente_datas d JOIN clientes c ON c.id = d.cliente_id
+        ORDER BY d.mes, d.dia`);
+    return r.rows;
   },
   async criarCliente(d) {
     const cols = ['empresa','razao_social','cnpj','nicho','tamanho','logo_path','cep',
                   'endereco','complemento','cidade','estado','contato','telefone','email','site','instagram'];
     const vals = cols.map((c) => d[c] ?? null);
     const ph = cols.map((_, i) => `$${i + 1}`).join(',');
-    const r = await q(`INSERT INTO clientes (${cols.join(',')}) VALUES (${ph}) RETURNING *`, vals);
-    return r.rows[0];
+    const r = await q(`INSERT INTO clientes (${cols.join(',')}) VALUES (${ph}) RETURNING id`, vals);
+    return this.buscarCliente(r.rows[0].id);
   },
   async atualizarCliente(id, d) {
     const cols = ['empresa','razao_social','cnpj','nicho','tamanho','logo_path','cep',
@@ -252,8 +355,8 @@ module.exports = {
     const set = presentes.map((c, i) => `${c} = $${i + 1}`).join(',');
     const vals = presentes.map((c) => d[c]);
     vals.push(id);
-    const r = await q(`UPDATE clientes SET ${set} WHERE id = $${vals.length} RETURNING *`, vals);
-    return r.rows[0] || null;
+    const r = await q(`UPDATE clientes SET ${set} WHERE id = $${vals.length} RETURNING id`, vals);
+    return r.rows[0] ? this.buscarCliente(id) : null;
   },
   async excluirCliente(id) {
     const r = await q('DELETE FROM clientes WHERE id = $1', [id]);
@@ -454,21 +557,23 @@ module.exports = {
     const r = await q(
       `INSERT INTO historico (tipo, entidade, entidade_id, tarefa_id, titulo, setor_id,
                               usuario_id, usuario_nome, detalhe, cliente_id, cliente_nome,
-                              responsaveis, ip, user_agent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+                              responsaveis, ip, user_agent, prioridade)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
       [d.tipo, d.entidade || 'tarefa', d.entidade_id != null ? d.entidade_id : (d.tarefa_id || null),
        d.tarefa_id || null, d.titulo || '', d.setor_id || null,
        d.usuario_id || null, d.usuario_nome || '', d.detalhe || '',
        d.cliente_id || null, d.cliente_nome || '',
        JSON.stringify(Array.isArray(d.responsaveis) ? d.responsaveis : []),
-       d.ip || '', d.user_agent || '']);
+       d.ip || '', d.user_agent || '', d.prioridade || '']);
     return r.rows[0];
   },
-  // Mesmos filtros do memoryRepo (paridade): setorId, entidade, tipo,
-  // usuarioId, de/ate (YYYY-MM-DD), q (busca livre) e limit.
+  // Mesmos filtros do memoryRepo (paridade): setorId, entidade, tipo, tipos,
+  // usuarioId, clienteNome, responsavelNome, prioridade, de/ate (YYYY-MM-DD),
+  // q (busca livre) e limit.
   async listarHistorico(filtros = {}) {
-    const { limit = 300, setorId = null, entidade = null, tipo = null,
-            usuarioId = null, de = null, ate = null, q: busca = null, antesDe = null } = filtros;
+    const { limit = 300, setorId = null, entidade = null, tipo = null, tipos = null,
+            usuarioId = null, clienteNome = null, responsavelNome = null, prioridade = null,
+            de = null, ate = null, q: busca = null, antesDe = null } = filtros;
     const cond = [];
     const params = [];
     const add = (sql, valor) => { params.push(valor); cond.push(sql.replace('$?', '$' + params.length)); };
@@ -477,7 +582,12 @@ module.exports = {
     if (setorId != null)  add('setor_id = $?', Number(setorId));
     if (entidade)         add('entidade = $?', entidade);
     if (tipo)             add('tipo = $?', tipo);
+    if (Array.isArray(tipos) && tipos.length) add('tipo = ANY($?)', tipos);
     if (usuarioId != null) add('usuario_id = $?', Number(usuarioId));
+    if (clienteNome)      add('cliente_nome = $?', clienteNome);
+    // responsaveis e uma lista JSON de {id, nome}: "contem alguem com este nome"
+    if (responsavelNome)  add('responsaveis @> $?::jsonb', JSON.stringify([{ nome: responsavelNome }]));
+    if (prioridade)       add('prioridade = $?', prioridade);
     if (de)               add('criado_em >= $?::date', de);
     if (ate)              add('criado_em < ($?::date + 1)', ate);
     if (busca) {
@@ -504,6 +614,13 @@ module.exports = {
            FROM historico WHERE cliente_nome <> '') AS clientes,
         (SELECT COALESCE(json_agg(DISTINCT setor_id ORDER BY setor_id), '[]')
            FROM historico WHERE setor_id IS NOT NULL) AS setores,
+        (SELECT COALESCE(json_agg(DISTINCT r.nome ORDER BY r.nome), '[]')
+           FROM historico h,
+                jsonb_to_recordset(CASE WHEN jsonb_typeof(h.responsaveis) = 'array'
+                                        THEN h.responsaveis ELSE '[]'::jsonb END) AS r(nome text)
+          WHERE r.nome IS NOT NULL AND r.nome <> '') AS responsaveis,
+        (SELECT COALESCE(json_agg(DISTINCT prioridade ORDER BY prioridade), '[]')
+           FROM historico WHERE prioridade <> '') AS prioridades,
         (SELECT COALESCE(json_agg(DISTINCT entidade ORDER BY entidade), '[]') FROM historico) AS entidades,
         (SELECT COALESCE(json_agg(DISTINCT tipo ORDER BY tipo), '[]') FROM historico) AS tipos,
         (SELECT count(*)::int FROM historico) AS total
@@ -543,5 +660,297 @@ module.exports = {
       await q('UPDATE notificacoes SET lida = true WHERE lida = false');
     }
     return true;
+  },
+
+  // ---------------- EQUIPE / FOTO DE PERFIL ----------------
+  async listarEquipe() {
+    const r = await q(
+      `SELECT u.id, u.nome, u.setor_id, s.nome AS setor_nome, u.avatar_path
+         FROM usuarios u JOIN setores s ON s.id = u.setor_id
+        WHERE u.ativo
+        ORDER BY u.nome`);
+    return r.rows;
+  },
+  async definirAvatar(usuarioId, caminho) {
+    const r = await q(
+      `UPDATE usuarios u SET avatar_path = $1
+         FROM (SELECT avatar_path FROM usuarios WHERE id = $2) antes
+        WHERE u.id = $2
+        RETURNING antes.avatar_path AS anterior`, [caminho || null, usuarioId]);
+    return r.rows[0] ? { anterior: r.rows[0].anterior } : null;
+  },
+
+  // ---------------- CALENDARIO DA EQUIPE ----------------
+  async listarEventos({ de = null, ate = null } = {}) {
+    const r = await q(`${EVENTO_SELECT}
+      WHERE ($1::date IS NULL OR e.data >= $1::date) AND ($2::date IS NULL OR e.data <= $2::date)
+      ORDER BY e.data, e.hora_inicio NULLS FIRST, e.id`, [de, ate]);
+    return r.rows;
+  },
+  async buscarEvento(id) {
+    const r = await q(`${EVENTO_SELECT} WHERE e.id = $1`, [id]);
+    return r.rows[0] || null;
+  },
+  async criarEvento(d) {
+    const r = await q(
+      `INSERT INTO eventos (titulo, descricao, data, hora_inicio, hora_fim, local, setor_id, criado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+      [d.titulo, d.descricao || '', d.data, d.hora_inicio || null, d.hora_fim || null,
+       d.local || '', d.setor_id || null, d.criado_por || null]);
+    const id = r.rows[0].id;
+    await setParticipantes(id, d.participantes);
+    return this.buscarEvento(id);
+  },
+  async atualizarEvento(id, d) {
+    const cols = ['titulo', 'descricao', 'data', 'hora_inicio', 'hora_fim', 'local', 'setor_id'];
+    const presentes = cols.filter((c) => c in d);
+    const set = presentes.map((c, i) => `${c} = $${i + 1}`);
+    set.push('atualizado_em = now()');
+    const vals = presentes.map((c) => d[c]);
+    vals.push(id);
+    const r = await q(`UPDATE eventos SET ${set.join(',')} WHERE id = $${vals.length}`, vals);
+    if (!r.rowCount) return null;
+    if (Array.isArray(d.participantes)) await setParticipantes(id, d.participantes);
+    return this.buscarEvento(id);
+  },
+  async excluirEvento(id) {
+    const r = await q('DELETE FROM eventos WHERE id = $1', [id]);
+    return r.rowCount > 0;
+  },
+
+  // ---------------- CHAT ----------------
+  async listarConversasDoUsuario(uid) {
+    const r = await q(`${CONVERSA_SELECT}
+      WHERE EXISTS (SELECT 1 FROM chat_membros m WHERE m.conversa_id = c.id AND m.usuario_id = $1::int)
+      ORDER BY c.atualizado_em DESC, c.id DESC`, [uid]);
+    return r.rows;
+  },
+  async buscarConversa(id, uid = null) {
+    const r = await q(`${CONVERSA_SELECT} WHERE c.id = $2`, [uid, id]);
+    return r.rows[0] || null;
+  },
+  async buscarConversaDireta(uidA, uidB) {
+    const r = await q(
+      `SELECT c.id FROM chat_conversas c
+        WHERE c.tipo = 'direta'
+          AND (SELECT count(*) FROM chat_membros m WHERE m.conversa_id = c.id) = 2
+          AND EXISTS (SELECT 1 FROM chat_membros m WHERE m.conversa_id = c.id AND m.usuario_id = $1)
+          AND EXISTS (SELECT 1 FROM chat_membros m WHERE m.conversa_id = c.id AND m.usuario_id = $2)
+        LIMIT 1`, [uidA, uidB]);
+    return r.rows[0] ? this.buscarConversa(r.rows[0].id, uidA) : null;
+  },
+  async criarConversa(d) {
+    const r = await q(
+      'INSERT INTO chat_conversas (tipo, nome, criado_por) VALUES ($1,$2,$3) RETURNING id',
+      [d.tipo, d.nome || '', d.criado_por || null]);
+    const id = r.rows[0].id;
+    for (const uid of new Set(d.membros || [])) {
+      await q('INSERT INTO chat_membros (conversa_id, usuario_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, uid]);
+    }
+    return this.buscarConversa(id, d.criado_por);
+  },
+  async atualizarConversa(id, d) {
+    const r = await q('SELECT id FROM chat_conversas WHERE id = $1', [id]);
+    if (!r.rows[0]) return null;
+    if ('nome' in d) await q('UPDATE chat_conversas SET nome = $1 WHERE id = $2', [d.nome, id]);
+    if (Array.isArray(d.membros)) {
+      // quem continua guarda ate onde ja leu
+      await q('DELETE FROM chat_membros WHERE conversa_id = $1 AND NOT (usuario_id = ANY($2))', [id, d.membros]);
+      for (const uid of new Set(d.membros)) {
+        await q('INSERT INTO chat_membros (conversa_id, usuario_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, uid]);
+      }
+    }
+    return this.buscarConversa(id, null);
+  },
+  async removerMembroConversa(id, uid) {
+    const r = await q('DELETE FROM chat_membros WHERE conversa_id = $1 AND usuario_id = $2', [id, uid]);
+    return r.rowCount > 0;
+  },
+  async excluirConversa(id) {
+    const a = await q('SELECT anexo_arquivo FROM chat_mensagens WHERE conversa_id = $1 AND anexo_arquivo IS NOT NULL', [id]);
+    const r = await q('DELETE FROM chat_conversas WHERE id = $1', [id]); // cascata em membros e mensagens
+    if (!r.rowCount) return null;
+    return { arquivos: a.rows.map((x) => x.anexo_arquivo) };
+  },
+  async listarMensagens(conversaId, { antesDe = null, limit = 50 } = {}) {
+    const r = await q(`${MENSAGEM_SELECT}
+      WHERE mm.conversa_id = $1 AND ($2::int IS NULL OR mm.id < $2::int)
+      ORDER BY mm.id DESC LIMIT $3`, [conversaId, antesDe == null ? null : Number(antesDe), limit]);
+    return r.rows;
+  },
+  async criarMensagem(d) {
+    const r = await q(
+      `INSERT INTO chat_mensagens (conversa_id, usuario_id, texto, anexo_nome_original,
+                                   anexo_arquivo, anexo_mime, anexo_tamanho)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [d.conversa_id, d.usuario_id, d.texto || '', d.anexo_nome_original || null,
+       d.anexo_arquivo || null, d.anexo_mime || null, d.anexo_tamanho || null]);
+    const id = r.rows[0].id;
+    await q('UPDATE chat_conversas SET atualizado_em = now() WHERE id = $1', [d.conversa_id]);
+    // quem escreveu ja leu ate a propria mensagem
+    await q(`UPDATE chat_membros SET ultima_lida_id = GREATEST(ultima_lida_id, $1)
+              WHERE conversa_id = $2 AND usuario_id = $3`, [id, d.conversa_id, d.usuario_id]);
+    return this.buscarMensagem(id);
+  },
+  async buscarMensagem(id) {
+    const r = await q(`${MENSAGEM_SELECT} WHERE mm.id = $1`, [id]);
+    return r.rows[0] || null;
+  },
+  async marcarConversaLida(conversaId, uid, ateId) {
+    // so avanca: uma aba velha nao "desle" o que outra aba ja leu
+    const r = await q(`UPDATE chat_membros SET ultima_lida_id = GREATEST(ultima_lida_id, $1)
+                        WHERE conversa_id = $2 AND usuario_id = $3`, [Number(ateId) || 0, conversaId, uid]);
+    return r.rowCount > 0;
+  },
+  async contarChatNaoLidas(uid) {
+    const r = await q(
+      `SELECT count(*)::int AS n
+         FROM chat_mensagens mm
+         JOIN chat_membros m ON m.conversa_id = mm.conversa_id AND m.usuario_id = $1
+        WHERE mm.id > m.ultima_lida_id AND mm.usuario_id IS DISTINCT FROM $1`, [uid]);
+    return r.rows[0].n;
+  },
+
+  // ---------------- PROMPTS E MENSAGENS SALVAS ----------------
+  async listarTextos({ tipo, usuarioId = null }) {
+    const r = await q(
+      `SELECT t.*, COALESCE(u.nome, '') AS autor_nome
+         FROM textos_salvos t LEFT JOIN usuarios u ON u.id = t.usuario_id
+        WHERE t.tipo = $1 AND ($2::int IS NULL OR t.usuario_id = $2::int)
+        ORDER BY t.titulo`, [tipo, usuarioId]);
+    return r.rows;
+  },
+  async buscarTexto(id) {
+    const r = await q('SELECT * FROM textos_salvos WHERE id = $1', [id]);
+    return r.rows[0] || null;
+  },
+  async criarTexto(d) {
+    const r = await q(
+      'INSERT INTO textos_salvos (tipo, usuario_id, titulo, conteudo) VALUES ($1,$2,$3,$4) RETURNING *',
+      [d.tipo, d.usuario_id || null, d.titulo, d.conteudo || '']);
+    return r.rows[0];
+  },
+  async atualizarTexto(id, d) {
+    const cols = ['titulo', 'conteudo'].filter((c) => c in d);
+    const set = cols.map((c, i) => `${c} = $${i + 1}`);
+    set.push('atualizado_em = now()');
+    const vals = cols.map((c) => d[c]);
+    vals.push(id);
+    const r = await q(`UPDATE textos_salvos SET ${set.join(',')} WHERE id = $${vals.length} RETURNING *`, vals);
+    return r.rows[0] || null;
+  },
+  async excluirTexto(id) {
+    const r = await q('DELETE FROM textos_salvos WHERE id = $1', [id]);
+    return r.rowCount > 0;
+  },
+
+  // ---------------- BRIEFINGS ----------------
+  async listarBriefings() {
+    const r = await q(`${BRIEFING_SELECT} ORDER BY b.atualizado_em DESC`);
+    return r.rows;
+  },
+  async buscarBriefing(id) {
+    const r = await q(`${BRIEFING_SELECT} WHERE b.id = $1`, [id]);
+    return r.rows[0] || null;
+  },
+  async criarBriefing(d) {
+    const r = await q(
+      `INSERT INTO briefings (cliente_id, empresa, respostas, criado_por, atualizado_por)
+       VALUES ($1,$2,$3,$4,$4) RETURNING id`,
+      [d.cliente_id || null, d.empresa, JSON.stringify(d.respostas || {}), d.criado_por || null]);
+    return this.buscarBriefing(r.rows[0].id);
+  },
+  async atualizarBriefing(id, d) {
+    const cols = ['cliente_id', 'empresa', 'atualizado_por'].filter((c) => c in d);
+    const set = cols.map((c, i) => `${c} = $${i + 1}`);
+    const vals = cols.map((c) => d[c]);
+    if (d.respostas) { vals.push(JSON.stringify(d.respostas)); set.push(`respostas = $${vals.length}`); }
+    set.push('atualizado_em = now()');
+    vals.push(id);
+    const r = await q(`UPDATE briefings SET ${set.join(',')} WHERE id = $${vals.length}`, vals);
+    return r.rowCount ? this.buscarBriefing(id) : null;
+  },
+  // devolve os arquivos anexados, para quem chamou apagar do disco
+  async excluirBriefing(id) {
+    const a = await q('SELECT nome_arquivo FROM briefing_arquivos WHERE briefing_id = $1', [id]);
+    const r = await q('DELETE FROM briefings WHERE id = $1', [id]); // cascata nos arquivos
+    return r.rowCount ? { arquivos: a.rows.map((x) => x.nome_arquivo) } : null;
+  },
+  async listarArquivosBriefing(briefingId) {
+    const r = await q(
+      `SELECT a.*, COALESCE(u.nome, '') AS enviado_por_nome
+         FROM briefing_arquivos a LEFT JOIN usuarios u ON u.id = a.enviado_por
+        WHERE a.briefing_id = $1 ORDER BY a.id`, [briefingId]);
+    return r.rows;
+  },
+  async criarArquivoBriefing(d) {
+    const r = await q(
+      `INSERT INTO briefing_arquivos (briefing_id, nome_original, nome_arquivo, mime, tamanho, enviado_por)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [d.briefing_id, d.nome_original, d.nome_arquivo, d.mime, d.tamanho, d.enviado_por || null]);
+    return r.rows[0];
+  },
+  async buscarArquivoBriefing(id) {
+    const r = await q('SELECT * FROM briefing_arquivos WHERE id = $1', [id]);
+    return r.rows[0] || null;
+  },
+  async excluirArquivoBriefing(id) {
+    const r = await q('DELETE FROM briefing_arquivos WHERE id = $1', [id]);
+    return r.rowCount > 0;
+  },
+
+  // ---------------- COFRE DE ACESSOS ----------------
+  async listarAcessos() {
+    const r = await q(`${ACESSO_SELECT} ORDER BY COALESCE(c.empresa, ''), a.servico`);
+    return r.rows;
+  },
+  async buscarAcesso(id) {
+    const r = await q(`${ACESSO_SELECT} WHERE a.id = $1`, [id]);
+    return r.rows[0] || null;
+  },
+  async lerSenhaCifrada(id) {
+    const r = await q('SELECT senha_cifrada FROM acessos WHERE id = $1', [id]);
+    return r.rows[0] ? (r.rows[0].senha_cifrada || null) : null;
+  },
+  async criarAcesso(d) {
+    const r = await q(
+      `INSERT INTO acessos (cliente_id, servico, url, login, senha_cifrada, observacoes, criado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [d.cliente_id || null, d.servico, d.url || '', d.login || '', d.senha_cifrada || null,
+       d.observacoes || '', d.criado_por || null]);
+    return this.buscarAcesso(r.rows[0].id);
+  },
+  async atualizarAcesso(id, d) {
+    const cols = ['cliente_id', 'servico', 'url', 'login', 'senha_cifrada', 'observacoes'].filter((c) => c in d);
+    const set = cols.map((c, i) => `${c} = $${i + 1}`);
+    set.push('atualizado_em = now()');
+    const vals = cols.map((c) => d[c]);
+    vals.push(id);
+    const r = await q(`UPDATE acessos SET ${set.join(',')} WHERE id = $${vals.length}`, vals);
+    return r.rowCount ? this.buscarAcesso(id) : null;
+  },
+  async excluirAcesso(id) {
+    const r = await q('DELETE FROM acessos WHERE id = $1', [id]);
+    return r.rowCount > 0;
+  },
+
+  // ---------------- PUSH ----------------
+  async salvarInscricaoPush(d) {
+    await q(
+      `INSERT INTO push_inscricoes (usuario_id, endpoint, p256dh, auth) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (endpoint) DO UPDATE
+         SET usuario_id = EXCLUDED.usuario_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+      [d.usuario_id, d.endpoint, d.p256dh, d.auth]);
+    return true;
+  },
+  async removerInscricaoPush(endpoint, usuarioId = null) {
+    const r = await q('DELETE FROM push_inscricoes WHERE endpoint = $1 AND ($2::int IS NULL OR usuario_id = $2::int)',
+      [endpoint, usuarioId]);
+    return r.rowCount > 0;
+  },
+  async listarInscricoesPush(usuarioIds) {
+    if (!usuarioIds || !usuarioIds.length) return [];
+    const r = await q('SELECT * FROM push_inscricoes WHERE usuario_id = ANY($1)', [usuarioIds]);
+    return r.rows;
   },
 };

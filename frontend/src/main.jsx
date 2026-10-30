@@ -10,6 +10,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppProvider } from './context/AppContext';
 import { NotificacoesProvider } from './context/NotificacoesContext';
 import { TarefaModalProvider } from './context/TarefaModalContext';
+import { ChatProvider } from './context/ChatContext';
+import { AgendaProvider } from './context/AgendaContext';
+import { registrarSW } from './lib/push';
 
 import App from './App';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -19,6 +22,11 @@ import Kanban from './pages/Kanban';
 import Calendario from './pages/Calendario';
 import Clientes from './pages/Clientes';
 import CalendarioEquipe from './pages/CalendarioEquipe';
+import Chat from './pages/Chat';
+import Briefings from './pages/Briefings';
+import Prompts from './pages/Prompts';
+import Mensagens from './pages/Mensagens';
+import Acessos from './pages/Acessos';
 import DatasComemorativas from './pages/DatasComemorativas';
 import Historico from './pages/Historico';
 import Usuarios from './pages/Usuarios';
@@ -46,6 +54,10 @@ function UsuariosGuard() {
   const { ehAdmin } = useAuth();
   return <Guard permitido={ehAdmin}><Usuarios /></Guard>;
 }
+function AcessosGuard() {
+  const { ehAdmin } = useAuth();
+  return <Guard permitido={ehAdmin}><Acessos /></Guard>;
+}
 
 function Raiz() {
   return (
@@ -53,6 +65,8 @@ function Raiz() {
       <AuthProvider>
         <AppProvider>
           <NotificacoesProvider>
+            <ChatProvider>
+            <AgendaProvider>
             <TarefaModalProvider>
               <BrowserRouter>
                 <Routes>
@@ -64,6 +78,11 @@ function Raiz() {
                     <Route path="calendario" element={<Calendario />} />
                     <Route path="clientes" element={<Clientes />} />
                     <Route path="calendario-equipe" element={<CalendarioEquipe />} />
+                    <Route path="chat" element={<Chat />} />
+                    <Route path="briefing" element={<Briefings />} />
+                    <Route path="prompts" element={<Prompts />} />
+                    <Route path="mensagens" element={<Mensagens />} />
+                    <Route path="acessos" element={<AcessosGuard />} />
                     <Route path="datas" element={<DatasGuard />} />
                     <Route path="historico" element={<HistoricoGuard />} />
                     <Route path="usuarios" element={<UsuariosGuard />} />
@@ -72,12 +91,17 @@ function Raiz() {
                 </Routes>
               </BrowserRouter>
             </TarefaModalProvider>
+            </AgendaProvider>
+            </ChatProvider>
           </NotificacoesProvider>
         </AppProvider>
       </AuthProvider>
     </ToastProvider>
   );
 }
+
+// service worker: recebe o push com a aba fechada (sem cache offline)
+registrarSW();
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>

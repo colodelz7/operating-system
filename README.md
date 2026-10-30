@@ -22,9 +22,17 @@ Sistema interno de gestão de trabalho por setores: quadro Kanban com arrastar e
 - **Detalhe da demanda**: descrição com checklist, status editável, comentários da equipe e anexos com pré-visualização de imagem e PDF na própria tela.
 - **Calendário**: entregas do mês, com remarcação arrastando o card para outro dia.
 - **Clientes**: ficha completa com logo, restrita a quem tem permissão.
-- **Calendário da Equipe**: calendário externo incorporado, aceito apenas em https e de domínio conhecido.
+- **Calendário da Equipe**: agenda interna (reuniões, gravações, visitas), com eventos da equipe toda ou de um setor, participantes de qualquer setor e aviso dos eventos de hoje no topo da tela.
+- **Chat**: conversa direta e grupos, com imagens e arquivos, contador de não lidas no menu e mensagem chegando na hora. Só quem é membro lê a conversa, nem o admin lê conversa alheia.
+- **Briefing**: formulário de entrada do cliente, com progresso, rascunho automático no navegador e cópia em texto corrido.
+- **Prompts**: biblioteca de prompts da equipe.
+- **Mensagens salvas**: respostas prontas pessoais, que só o dono vê.
+- **Cofre de acessos**: logins e senhas dos clientes, só para administradores, com a senha cifrada no banco.
+- **Foto de perfil**: cada pessoa coloca a sua pelo menu lateral.
+- **Avisos no aparelho**: notificação push no celular e no computador (tarefa, chat e evento), mesmo com a aba fechada. O sistema pode ser instalado na tela de início.
+- **Trocar de sistema**: botão com atalhos para os outros sistemas da empresa, configurado por `VITE_SISTEMAS`.
 - **Datas Comemorativas**: calendário de marketing do ano.
-- **Histórico**: registro de tudo que acontece no sistema (acessos, tentativas de senha, bloqueios, e cada registro criado, editado ou excluído), com autor, data, IP e navegador. Filtros por tipo, ação, pessoa e período, busca por texto e painel de detalhes ao clicar em um evento. Filtros e paginação rodam no servidor.
+- **Histórico**: registro de tudo que acontece no sistema (acessos, tentativas de senha, bloqueios, e cada registro criado, editado ou excluído), com autor, data, IP e navegador. Filtros rápidos (tarefas, acessos, logins que falharam, bloqueios, cofre) e filtros por tipo, ação, setor, cliente, responsável, prioridade e período, busca por texto e painel de detalhes ao clicar em um evento. Filtros e paginação rodam no servidor.
 - **Usuários**: gestão de contas, papéis, setor, colunas visíveis e ativação, restrita a administradores.
 - **ColodelBot**: botão flutuante com assistente que cria, edita, move, comenta, duplica, consulta e exclui demandas, clientes e usuários por conversa, com a resposta chegando em tempo real.
 
@@ -58,9 +66,11 @@ O projeto passou por uma auditoria completa de código, configuração, dependê
 - `TRUST_PROXY` diz em quem confiar quando chega `X-Forwarded-For`, e aceita lista de endereços ou faixas. Confiar em quem não é proxy deixaria qualquer cliente inventar o próprio IP e escapar do limite de tentativas de login.
 - Cabeçalhos de segurança em toda resposta da API: CSP, `nosniff`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`, COOP e CORP. O frontend também sai com CSP própria pelo nginx, que proíbe script inline e limita de onde vêm estilo, fonte e iframe.
 - Escritas conferem a origem da requisição, e alguns WAFs de hospedagem bloqueiam PUT, PATCH e DELETE: o front envia essas escritas como POST com `X-HTTP-Method-Override` e o servidor restaura o método, aceitando só esses três verbos.
-- Rate limit no login e no assistente, e `npm audit` zerado nos dois projetos.
+- Rate limit no login, no assistente, no chat e na abertura de senha do cofre. O `npm audit` aponta apenas o zod, cuja correcao exige a versao 4 (mudanca de API).
 - Nenhum segredo versionado: os arquivos `.env` ficam fora do repositório e os `.env.example` não trazem valores de exemplo para senha ou chave.
-- O endereço do calendário incorporado só vai para o iframe se for https e de um domínio de calendário conhecido.
+- Cofre de acessos: senha cifrada com AES-256-GCM e a chave `COFRE_CHAVE` só no servidor; a lista nunca traz senha, cada senha aberta vira registro no histórico e o pedido tem limite de frequência. Sem a chave, o cofre fica desligado em vez de guardar senha em texto puro.
+- Push: o servidor só aceita inscrição de serviços de push conhecidos (Google, Mozilla, Microsoft, Apple), para não virar caminho de SSRF. Sem chaves VAPID, o push fica desligado.
+- Chat, mensagens salvas e eventos de outro setor respondem 404 para quem não pode ver: a API não confirma nem que o registro existe.
 
 **Assistente**
 - A chave do modelo fica apenas no servidor, e o navegador nunca a recebe.

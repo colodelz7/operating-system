@@ -50,6 +50,7 @@ async function registrar(req, dados = {}) {
       cliente_id: dados.cliente_id || null,
       cliente_nome: dados.cliente_nome || '',
       responsaveis: Array.isArray(dados.responsaveis) ? dados.responsaveis : [],
+      prioridade: dados.prioridade || '',
       ip: ipDe(req),
       user_agent: navegadorDe(req),
     });

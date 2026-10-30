@@ -12,22 +12,32 @@ const express = require('express');
 const repo = require('../data');
 const { exigirLogin, exigirAdmin } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
-const { filtroHistoricoSchema } = require('../schemas/historico.schema');
+const { filtroHistoricoSchema, CATEGORIAS } = require('../schemas/historico.schema');
 
 const router = express.Router();
 router.use(exigirLogin, exigirAdmin);
 
-// GET /api/historico?entidade=&tipo=&usuario_id=&setor=&de=&ate=&q=&limit=
+// GET /api/historico?categoria=&entidade=&tipo=&usuario_id=&setor=&cliente=
+//                    &responsavel=&prioridade=&de=&ate=&q=&limit=
 router.get('/', validate(filtroHistoricoSchema, 'query'), async (req, res, next) => {
   try {
     const f = req.query;
     const limite = f.limit || 60;
+    const cat = (f.categoria && CATEGORIAS[f.categoria]) || {};
+    // categoria e "Tipo" escolhidos ao mesmo tempo e conflitantes: nada casa
+    if (cat.entidade && f.entidade && cat.entidade !== f.entidade) {
+      return res.json({ historico: [], tem_mais: false, proximo: null });
+    }
     // pede um a mais so para saber se existe proxima pagina
     const pagina = await repo.listarHistorico({
       limit: limite + 1,
       setorId: f.setor,
-      entidade: f.entidade,
+      entidade: f.entidade || cat.entidade || null,
       tipo: f.tipo,
+      tipos: cat.tipos || null,
+      clienteNome: f.cliente,
+      responsavelNome: f.responsavel,
+      prioridade: f.prioridade,
       usuarioId: f.usuario_id,
       de: f.de,
       ate: f.ate,

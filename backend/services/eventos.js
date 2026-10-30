@@ -29,4 +29,16 @@ function avisarNotificacao(notificacao) {
   });
 }
 
-module.exports = { barramento, avisarNotificacao };
+/**
+ * Avisa que chegou mensagem (ou mudou algo) numa conversa do chat.
+ * So os membros recebem: quem decide isso e o endpoint SSE, pela lista.
+ */
+function avisarChat({ conversa_id, membros, mensagem_id = null }) {
+  barramento.emit('chat', {
+    conversa_id,
+    membros: Array.isArray(membros) ? membros : [],
+    mensagem_id,
+  });
+}
+
+module.exports = { barramento, avisarNotificacao, avisarChat };

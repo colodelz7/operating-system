@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import RecorrentesPanel from './RecorrentesPanel';
 import { opcoesFiltro, filtrosAtivos } from '../lib/filtros';
 
 // Barra de filtros compartilhada (cliente / responsavel / urgencia / periodo).
@@ -7,6 +9,7 @@ export default function Filtros({ tarefas }) {
   const { cli, rsp } = opcoesFiltro(tarefas || []);
   const set = (campo, valor) => setFiltros((f) => ({ ...f, [campo]: valor }));
   const cap = (p) => p[0].toUpperCase() + p.slice(1);
+  const [verRecorrentes, setVerRecorrentes] = useState(false);
 
   return (
     <div className="barra-filtros">
@@ -29,6 +32,11 @@ export default function Filtros({ tarefas }) {
       <label className="bf-data-wrap">De <input type="date" className="bf-data" value={filtros.de || ''} onChange={(e) => set('de', e.target.value)} /></label>
       <label className="bf-data-wrap">Até <input type="date" className="bf-data" value={filtros.ate || ''} onChange={(e) => set('ate', e.target.value)} /></label>
       {filtrosAtivos(filtros) && <button className="bf-limpar" onClick={limparFiltros}>Limpar</button>}
+      <button className="bf-recorrentes" onClick={() => setVerRecorrentes(true)} title="Ver e ajustar as tarefas que se repetem">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M17 2l4 4-4 4" /><path d="M3 11v-1a4 4 0 0 1 4-4h14" /><path d="M7 22l-4-4 4-4" /><path d="M21 13v1a4 4 0 0 1-4 4H3" /></svg>
+        Recorrentes
+      </button>
+      {verRecorrentes && <RecorrentesPanel onFechar={() => setVerRecorrentes(false)} />}
     </div>
   );
 }

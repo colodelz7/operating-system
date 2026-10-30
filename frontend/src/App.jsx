@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Topbar from './components/Topbar';
 import AssistenteColodelBot from './components/AssistenteColodelBot';
+import LancadorSistemas from './components/LancadorSistemas';
+import BannerAgenda from './components/BannerAgenda';
+import PushToggle from './components/PushToggle';
 import { useApp } from './context/AppContext';
 import { useNotificacoes } from './context/NotificacoesContext';
 import { useTarefaModal } from './context/TarefaModalContext';
@@ -24,8 +27,18 @@ export default function App() {
   const mobile = useIsMobile();
   const [sidebarAberta, setSidebarAberta] = useState(false);
   const [sinoAberto, setSinoAberto] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const { abrirDetalhe } = useTarefaModal();
 
   useEffect(() => { if (!mobile) setSidebarAberta(false); }, [mobile]);
+
+  // link do push de tarefa (?tarefa=ID): abre o detalhe e limpa a URL
+  useEffect(() => {
+    const id = Number(params.get('tarefa'));
+    if (!id) return;
+    abrirDetalhe(id);
+    setParams((p) => { const n = new URLSearchParams(p); n.delete('tarefa'); return n; }, { replace: true });
+  }, [params, setParams, abrirDetalhe]);
 
   const alternarTema = () => {
     const atual = document.documentElement.getAttribute('data-theme') || 'dark';
@@ -46,6 +59,7 @@ export default function App() {
             onToggleSino={() => setSinoAberto((v) => !v)}
           />
           <main className="conteudo" id="conteudo">
+            <BannerAgenda />
             <Outlet />
           </main>
         </div>
@@ -56,6 +70,7 @@ export default function App() {
       <NotifPanel aberto={sinoAberto} onFechar={() => setSinoAberto(false)} />
 
       <AssistenteColodelBot />
+      <LancadorSistemas />
     </>
   );
 }
@@ -86,6 +101,7 @@ function NotifPanel({ aberto, onFechar }) {
         <h4>Notificações</h4>
         <button onClick={marcarTodas}>Marcar todas como lidas</button>
       </div>
+      <PushToggle />
       <div id="notif-lista">
         {!notificacoes.length ? (
           <div className="notif-vazio">Nenhuma notificação por aqui.</div>

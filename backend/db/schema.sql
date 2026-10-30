@@ -9,6 +9,19 @@
 
 BEGIN;
 
+DROP TABLE IF EXISTS briefing_arquivos   CASCADE;
+DROP TABLE IF EXISTS cliente_datas       CASCADE;
+DROP TABLE IF EXISTS cliente_servicos    CASCADE;
+DROP TABLE IF EXISTS push_inscricoes     CASCADE;
+DROP TABLE IF EXISTS acessos             CASCADE;
+DROP TABLE IF EXISTS briefings           CASCADE;
+DROP TABLE IF EXISTS textos_salvos       CASCADE;
+DROP TABLE IF EXISTS chat_mensagens      CASCADE;
+DROP TABLE IF EXISTS chat_membros        CASCADE;
+DROP TABLE IF EXISTS chat_conversas      CASCADE;
+DROP TABLE IF EXISTS evento_participantes CASCADE;
+DROP TABLE IF EXISTS eventos             CASCADE;
+DROP TABLE IF EXISTS login_bloqueio      CASCADE;
 DROP TABLE IF EXISTS historico           CASCADE;
 DROP TABLE IF EXISTS notificacoes        CASCADE;
 DROP TABLE IF EXISTS comentarios         CASCADE;
@@ -47,7 +60,9 @@ CREATE TABLE usuarios (
   -- e derruba a sessao aberta na requisicao seguinte
   ativo         BOOLEAN NOT NULL DEFAULT true,
   -- pode cadastrar e editar clientes (admin e o Comercial ja podem por regra)
-  pode_clientes BOOLEAN NOT NULL DEFAULT false
+  pode_clientes BOOLEAN NOT NULL DEFAULT false,
+  -- foto de perfil (nome do arquivo na pasta de uploads)
+  avatar_path   TEXT
 );
 
 -- ---------------- COLUNAS DO KANBAN (por setor) ----------------
@@ -188,6 +203,7 @@ CREATE TABLE historico (
   cliente_id   INT,
   cliente_nome TEXT DEFAULT '',
   responsaveis JSONB DEFAULT '[]',
+  prioridade   TEXT DEFAULT '',
   ip           TEXT DEFAULT '',
   user_agent   TEXT DEFAULT '',
   criado_em    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -206,5 +222,147 @@ CREATE TABLE login_bloqueio (
   visto  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_login_bloqueio_visto ON login_bloqueio(visto);
+
+-- ---------------- CALENDARIO DA EQUIPE (eventos internos) ----------------
+-- setor_id NULL = evento da equipe toda; preenchido = so daquele setor.
+-- Participantes sempre enxergam o evento, mesmo de outro setor.
+CREATE TABLE IF NOT EXISTS eventos (
+  id            SERIAL PRIMARY KEY,
+  titulo        TEXT NOT NULL,
+  descricao     TEXT DEFAULT '',
+  data          DATE NOT NULL,
+  hora_inicio   TEXT,             -- 'HH:MM' (vazio = dia todo)
+  hora_fim      TEXT,
+  local         TEXT DEFAULT '',
+  setor_id      INT REFERENCES setores(id) ON DELETE SET NULL,
+  criado_por    INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_eventos_data ON eventos(data);
+
+CREATE TABLE IF NOT EXISTS evento_participantes (
+  evento_id  INT NOT NULL REFERENCES eventos(id)  ON DELETE CASCADE,
+  usuario_id INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  PRIMARY KEY (evento_id, usuario_id)
+);
+
+-- ---------------- CHAT INTERNO ----------------
+CREATE TABLE IF NOT EXISTS chat_conversas (
+  id            SERIAL PRIMARY KEY,
+  tipo          TEXT NOT NULL CHECK (tipo IN ('grupo','direta')),
+  nome          TEXT DEFAULT '',
+  criado_por    INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()   -- ultima atividade (ordena a lista)
+);
+
+CREATE TABLE IF NOT EXISTS chat_membros (
+  conversa_id    INT NOT NULL REFERENCES chat_conversas(id) ON DELETE CASCADE,
+  usuario_id     INT NOT NULL REFERENCES usuarios(id)       ON DELETE CASCADE,
+  ultima_lida_id INT NOT NULL DEFAULT 0,   -- ate qual mensagem a pessoa ja leu
+  PRIMARY KEY (conversa_id, usuario_id)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_membros_usuario ON chat_membros(usuario_id);
+
+CREATE TABLE IF NOT EXISTS chat_mensagens (
+  id                  SERIAL PRIMARY KEY,
+  conversa_id         INT NOT NULL REFERENCES chat_conversas(id) ON DELETE CASCADE,
+  usuario_id          INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  texto               TEXT NOT NULL DEFAULT '',
+  anexo_nome_original TEXT,
+  anexo_arquivo       TEXT,
+  anexo_mime          TEXT,
+  anexo_tamanho       BIGINT,
+  criado_em           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_mensagens_conversa ON chat_mensagens(conversa_id, id DESC);
+
+-- ---------------- PROMPTS (da equipe) E MENSAGENS SALVAS (pessoais) ----------------
+-- tipo 'prompt' = biblioteca compartilhada; 'mensagem' = so o dono ve.
+CREATE TABLE IF NOT EXISTS textos_salvos (
+  id            SERIAL PRIMARY KEY,
+  tipo          TEXT NOT NULL CHECK (tipo IN ('prompt','mensagem')),
+  usuario_id    INT REFERENCES usuarios(id) ON DELETE SET NULL,  -- prompt sobrevive ao autor
+  titulo        TEXT NOT NULL,
+  conteudo      TEXT NOT NULL DEFAULT '',
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_textos_tipo_usuario ON textos_salvos(tipo, usuario_id);
+
+-- ---------------- BRIEFINGS ----------------
+-- As perguntas vivem no backend (services/briefing.js); aqui so as respostas.
+CREATE TABLE IF NOT EXISTS briefings (
+  id             SERIAL PRIMARY KEY,
+  cliente_id     INT REFERENCES clientes(id) ON DELETE SET NULL,
+  empresa        TEXT NOT NULL,
+  respostas      JSONB NOT NULL DEFAULT '{}',
+  criado_por     INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  atualizado_por INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  criado_em      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------- COFRE DE ACESSOS ----------------
+-- A senha fica cifrada (AES-256-GCM) com a chave COFRE_CHAVE, que vive so no
+-- .env do servidor. Sem a chave, o banco sozinho nao entrega senha nenhuma.
+CREATE TABLE IF NOT EXISTS acessos (
+  id            SERIAL PRIMARY KEY,
+  cliente_id    INT REFERENCES clientes(id) ON DELETE SET NULL,
+  servico       TEXT NOT NULL,
+  url           TEXT DEFAULT '',
+  login         TEXT DEFAULT '',
+  senha_cifrada TEXT,
+  observacoes   TEXT DEFAULT '',
+  criado_por    INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------- NOTIFICACOES PUSH (aparelhos inscritos) ----------------
+CREATE TABLE IF NOT EXISTS push_inscricoes (
+  id         SERIAL PRIMARY KEY,
+  usuario_id INT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  endpoint   TEXT UNIQUE NOT NULL,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_push_usuario ON push_inscricoes(usuario_id);
+
+-- ---------------- SERVICOS E DATAS IMPORTANTES DO CLIENTE ----------------
+CREATE TABLE IF NOT EXISTS cliente_servicos (
+  id         SERIAL PRIMARY KEY,
+  cliente_id INT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  nome       TEXT NOT NULL,
+  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- o mesmo servico nao entra duas vezes no mesmo cliente (sem diferenciar maiuscula)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cliente_servico ON cliente_servicos(cliente_id, lower(nome));
+
+-- datas que repetem todo ano (aniversario da empresa, do dono, datas do nicho)
+CREATE TABLE IF NOT EXISTS cliente_datas (
+  id         SERIAL PRIMARY KEY,
+  cliente_id INT NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+  mes        INT NOT NULL CHECK (mes BETWEEN 1 AND 12),
+  dia        INT NOT NULL CHECK (dia BETWEEN 1 AND 31),
+  nome       TEXT NOT NULL,
+  criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_cliente_datas_cliente ON cliente_datas(cliente_id);
+
+-- ---------------- ARQUIVOS DO BRIEFING ----------------
+CREATE TABLE IF NOT EXISTS briefing_arquivos (
+  id            SERIAL PRIMARY KEY,
+  briefing_id   INT NOT NULL REFERENCES briefings(id) ON DELETE CASCADE,
+  nome_original TEXT NOT NULL,
+  nome_arquivo  TEXT NOT NULL,
+  mime          TEXT,
+  tamanho       BIGINT,
+  enviado_por   INT REFERENCES usuarios(id) ON DELETE SET NULL,
+  criado_em     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_briefing_arquivos ON briefing_arquivos(briefing_id);
 
 COMMIT;
