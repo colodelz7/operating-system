@@ -924,6 +924,133 @@ function ok(nome, cond) {
     await admO('DELETE', `/api/tarefas/${idRecorrente}`);
     await admO('DELETE', `/api/tarefas/${idTarefaAlta}`);
 
+    // =================================================================
+    //  correcoes da auditoria de seguranca
+    // =================================================================
+    const fs = require('fs');
+    const path = require('path');
+    const config = require('../config');
+    const pastaUploads = path.join(__dirname, '..', 'uploads');
+    const contarArquivos = () => fs.readdirSync(pastaUploads).length;
+
+    // 1) a rota generica de logo nao serve mais arquivo nenhum
+    r = await adm('POST', '/api/chat/conversas', { tipo: 'grupo', nome: 'Auditoria', membros: [idComercial] });
+    const idGrupoAud = r.dados.conversa.id;
+    r = await enviarArquivo(adm, `/api/chat/conversas/${idGrupoAud}/mensagens`, 'arquivo', PNG, 'image/png', 'segredo.png');
+    const arqChat = r.dados.mensagem.anexo_arquivo;
+    resp = await fetch(`${BASE}/api/clientes/logo/${arqChat}`, { headers: { Cookie: sessaoMembro.cookie } });
+    ok('quem nao e do grupo nao baixa o anexo por outra rota (logo/:arquivo sumiu)', resp.status === 404 || resp.status === 400);
+
+    // 2) extensao em disco vem do tipo aceito, nunca do nome enviado
+    r = await enviarArquivo(sessaoMembro, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'pagina.html');
+    ok('foto enviada como "pagina.html" fica gravada como .png', r.status === 200 && /\.png$/.test(r.dados.avatar_path));
+    resp = await fetch(`${BASE}/api/equipe/${idMorning}/avatar`, { headers: { Cookie: comercial.cookie } });
+    ok('e e servida como imagem, nunca como HTML', /image\/png/.test(resp.headers.get('content-type') || ''));
+
+    // 3) sem permissao na tarefa, o anexo nem chega ao disco
+    r = await adm('POST', '/api/tarefas', { setor_id: 2, titulo: 'Tarefa do Comercial' });
+    const idTarefaComercial = r.dados.tarefa.id;
+    let antes = contarArquivos();
+    r = await enviarArquivo(sessaoMembro, `/api/tarefas/${idTarefaComercial}/anexos`, 'arquivo', PNG, 'image/png', 'x.png');
+    ok('anexo em tarefa de outro setor -> 403 e nenhum arquivo fica no disco', r.status === 403 && contarArquivos() === antes);
+
+    // 4) falhas de login simultaneas contam todas
+    await Promise.all(Array.from({ length: 6 }, () => bloqueioLogin.registrarFalha('198.51.100.7', 'alguem')));
+    ok('6 senhas erradas ao mesmo tempo bloqueiam a origem', (await bloqueioLogin.estado('198.51.100.7', 'alguem')).bloqueado === true);
+    await bloqueioLogin.limpar('198.51.100.7', 'alguem');
+
+    // 5) cota de upload por pessoa (quantidade por hora e bytes por dia)
+    const cotaOriginal = { qtd: config.uploadMaxPorHora, bytes: config.uploadCotaDiariaBytes };
+    r = await adm('POST', '/api/usuarios', { nome: 'Cota', usuario: 'cotateste', senha: 'senha123', setor_id: 2, papel: 'membro' });
+    const cota = criarCliente();
+    await cota('POST', '/api/auth/login', { usuario: 'cotateste', senha: 'senha123' });
+    config.uploadCotaDiariaBytes = PNG.length + 4; // cabe 1 arquivo de teste por dia
+    r = await enviarArquivo(cota, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'a.png');
+    ok('primeiro arquivo dentro da cota entra', r.status === 200);
+    antes = contarArquivos();
+    r = await enviarArquivo(cota, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'b.png');
+    ok('arquivo que passa da cota diaria -> 429 e e apagado do disco', r.status === 429 && contarArquivos() === antes);
+    r = await enviarArquivo(cota, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'c.png');
+    ok('com a cota cheia, nem chega a gravar -> 429', r.status === 429 && contarArquivos() === antes);
+    config.uploadCotaDiariaBytes = cotaOriginal.bytes;
+    config.uploadMaxPorHora = 4; // o usuario ja gastou 3 nesta hora
+    r = await enviarArquivo(cota, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'd.png');
+    const quarto = r.status;
+    r = await enviarArquivo(cota, '/api/equipe/eu/avatar', 'foto', PNG, 'image/png', 'e.png');
+    ok('passou do limite de arquivos por hora -> 429', quarto === 200 && r.status === 429);
+    config.uploadMaxPorHora = cotaOriginal.qtd;
+    r = await cota('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idComercial });
+    r = await cota('POST', `/api/chat/conversas/${r.dados.conversa.id}/mensagens`, { texto: 'so texto' });
+    ok('com a cota de upload esgotada, mensagem so de texto continua indo', r.status === 201);
+
+    // 6) teto de conexoes de aviso em tempo real por pessoa
+    const abertas = [];
+    for (let i = 0; i < 6; i++) {
+      const ctl = new AbortController();
+      const rs = await fetch(`${BASE}/api/notificacoes/stream`, { headers: { Cookie: comercial.cookie }, signal: ctl.signal });
+      abertas.push({ ctl, status: rs.status });
+    }
+    const setima = await fetch(`${BASE}/api/notificacoes/stream`, { headers: { Cookie: comercial.cookie } });
+    ok('6 conexoes abrem e a 7a e recusada (429)', abertas.every((x) => x.status === 200) && setima.status === 429);
+    abertas.forEach((x) => x.ctl.abort());
+    await new Promise((ok2) => setTimeout(ok2, 150)); // o servidor percebe o fechamento
+    const ctl8 = new AbortController();
+    const depois = await fetch(`${BASE}/api/notificacoes/stream`, { headers: { Cookie: comercial.cookie }, signal: ctl8.signal });
+    ok('fechou as abas, volta a conectar', depois.status === 200);
+    ctl8.abort();
+
+    // 7) concluir a mesma recorrente duas vezes ao mesmo tempo gera so uma proxima
+    r = await adm('POST', '/api/tarefas', { setor_id: 3, titulo: 'Pauta semanal', recorrencia: 'semanal', data_entrega: '2026-11-13' });
+    const idSerie = r.dados.tarefa.id;
+    const colunasDoCriativo = (await adm('GET', '/api/setores/3/colunas')).dados.colunas;
+    const colFim = colunasDoCriativo.find((c) => c.e_conclusao);
+    const duplo = await Promise.all([
+      admO('PATCH', `/api/tarefas/${idSerie}/mover`, { coluna_id: colFim.id }),
+      admO('PATCH', `/api/tarefas/${idSerie}/mover`, { coluna_id: colFim.id }),
+    ]);
+    const geradas = (await adm('GET', '/api/tarefas?setor=3')).dados.tarefas.filter((t) => t.recorrencia_origem_id === idSerie);
+    ok('dois "concluir" simultaneos: uma proxima ocorrencia so', duplo.every((x) => x.status === 200) && geradas.length === 1);
+    // a rotina e a conclusao podem chamar a geracao juntas: so uma leva a reserva
+    const { gerarProxima } = require('../services/recorrencia');
+    r = await adm('POST', '/api/tarefas', { setor_id: 3, titulo: 'Relatório mensal', recorrencia: 'mensal', data_entrega: '2026-11-20' });
+    const serie2 = r.dados.tarefa;
+    const corrida = await Promise.all([gerarProxima(serie2), gerarProxima(serie2)]);
+    ok('duas geracoes simultaneas da mesma serie: so uma cria tarefa', corrida.filter(Boolean).length === 1);
+    ok('copia velha da tarefa (sem saber que ja gerou) nao gera de novo', (await gerarProxima(serie2)) === null);
+
+    // 8) conversa direta aberta pelos dois ao mesmo tempo vira uma so
+    r = await adm('POST', '/api/usuarios', { nome: 'Par A', usuario: 'para', senha: 'senha123', setor_id: 2, papel: 'membro' });
+    const idParA = r.dados.usuario.id;
+    const parA = criarCliente();
+    await parA('POST', '/api/auth/login', { usuario: 'para', senha: 'senha123' });
+    const simult = await Promise.all([
+      parA('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idComercial }),
+      comercial('POST', '/api/chat/conversas', { tipo: 'direta', usuario_id: idParA }),
+    ]);
+    ok('os dois abrindo ao mesmo tempo caem na mesma conversa',
+      simult[0].dados.conversa.id === simult[1].dados.conversa.id);
+
+    // 9) mesmo login criado duas vezes ao mesmo tempo: um entra, o outro 409
+    const dupla = await Promise.all([
+      adm('POST', '/api/usuarios', { nome: 'Gemeo', usuario: 'gemeo', senha: 'senha123', setor_id: 2, papel: 'membro' }),
+      adm('POST', '/api/usuarios', { nome: 'Gemeo', usuario: 'gemeo', senha: 'senha123', setor_id: 2, papel: 'membro' }),
+    ]);
+    ok('login duplicado simultaneo: 201 e 409, nunca 500',
+      dupla.map((x) => x.status).sort().join(',') === '201,409');
+
+    // 11) os limites de frequencia contam no repositorio (sobrevivem a reinicio)
+    const repoTeste = require('../data');
+    const { StoreNoBanco } = require('../middleware/rateLimit');
+    const store = new StoreNoBanco('rl-teste:');
+    store.init({ windowMs: 60000 });
+    const contagens = await Promise.all([store.increment('x'), store.increment('x'), store.increment('x')]);
+    ok('3 pedidos simultaneos somam 3 no repositorio (nao na memoria do processo)',
+      contagens.map((c) => c.totalHits).sort().join(',') === '1,2,3'
+      && (await repoTeste.lerUso('rl-teste:x')).contador === 3);
+    await store.resetKey('x');
+    ok('zerar a chave limpa o contador', (await repoTeste.lerUso('rl-teste:x')) === null);
+    await admO('DELETE', `/api/tarefas/${idTarefaComercial}`);
+
     // ---- TEMPO DE RESPOSTA DO LOGIN ----
     // Conta inexistente precisa custar o mesmo que conta real, senao o
     // relogio entrega quais logins existem.

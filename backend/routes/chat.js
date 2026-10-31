@@ -16,7 +16,7 @@ const { validate } = require('../middleware/validate');
 const { comIdValidado } = require('../middleware/params');
 const { upload, apagarArquivo, caminhoSeguro } = require('../middleware/upload');
 const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
-const { chatRateLimit } = require('../middleware/rateLimit');
+const { chatRateLimit, limiteDeUpload, contarUpload } = require('../middleware/rateLimit');
 const { avisarChat } = require('../services/eventos');
 const push = require('../services/push');
 const {
@@ -79,8 +79,10 @@ router.post('/conversas', validate(criarConversaSchema), async (req, res, next) 
       // conversa direta e unica por par: se ja existe, devolve a mesma
       const existente = await repo.buscarConversaDireta(eu, outro);
       if (existente) return res.json({ conversa: existente });
+      // se a outra pessoa abriu no mesmo instante, a chave unica devolve a dela
       const c = await repo.criarConversa({ tipo: 'direta', nome: '', criado_por: eu, membros: [eu, outro] });
-      return res.status(201).json({ conversa: c });
+      const { ja_existia: jaExistia, ...conversa } = c;
+      return res.status(jaExistia ? 200 : 201).json({ conversa });
     }
 
     const membros = await filtrarMembros([eu, ...req.body.membros]);
@@ -162,7 +164,7 @@ router.post('/conversas/:id/mensagens', chatRateLimit, async (req, res, next) =>
     req.conversa = c;
     next();
   } catch (e) { next(e); }
-}, upload.single('arquivo'), conferirAssinatura, validate(mensagemSchema), async (req, res, next) => {
+}, limiteDeUpload, upload.single('arquivo'), conferirAssinatura, contarUpload, validate(mensagemSchema), async (req, res, next) => {
   try {
     const c = req.conversa;
     const texto = req.body.texto;

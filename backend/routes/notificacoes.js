@@ -14,6 +14,10 @@ comIdValidado(router);
 // Admin (atendimento) vê todas; membro vê as do próprio setor (+ globais).
 router.use(exigirLogin);
 
+// conexoes SSE abertas por usuario neste processo
+const MAX_CONEXOES_POR_USUARIO = 6;
+const conexoesPorUsuario = new Map();
+
 function escopoSetor(usuario) {
   return usuario.papel === 'admin' ? null : usuario.setor_id;
 }
@@ -40,6 +44,16 @@ router.get('/', async (req, res, next) => {
 router.get('/stream', (req, res) => {
   const meuSetor = escopoSetor(req.usuario); // null = admin (vê tudo)
 
+  // Cada aba aberta é uma conexão presa neste processo. Sem teto, uma conta
+  // abria centenas e segurava memória do servidor. Contar aqui, por processo,
+  // é o certo: a conexão vive neste processo e só ele a segura.
+  const meuId = req.usuario.id;
+  const abertas = conexoesPorUsuario.get(meuId) || 0;
+  if (abertas >= MAX_CONEXOES_POR_USUARIO) {
+    return res.status(429).json({ erro: 'Muitas abas abertas recebendo avisos. Feche algumas.' });
+  }
+  conexoesPorUsuario.set(meuId, abertas + 1);
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -62,7 +76,6 @@ router.get('/stream', (req, res) => {
   barramento.on('notificacao', aoNotificar);
 
   // chat: o mesmo canal leva o aviso de mensagem nova, só para quem é membro
-  const meuId = req.usuario.id;
   const aoChat = (info) => {
     if (!info.membros.includes(meuId)) return;
     enviar('chat', { conversa_id: info.conversa_id, mensagem_id: info.mensagem_id });
@@ -72,7 +85,12 @@ router.get('/stream', (req, res) => {
   // ping para o proxy não derrubar a conexão por ociosidade
   const ping = setInterval(() => enviar('ping', { t: Date.now() }), 25000);
 
+  let encerrada = false;
   const encerrar = () => {
+    if (encerrada) return; // close e error podem chegar os dois
+    encerrada = true;
+    const n = (conexoesPorUsuario.get(meuId) || 1) - 1;
+    if (n > 0) conexoesPorUsuario.set(meuId, n); else conexoesPorUsuario.delete(meuId);
     clearInterval(ping);
     barramento.off('notificacao', aoNotificar);
     barramento.off('chat', aoChat);

@@ -6,7 +6,7 @@ const v = require('../utils/validar');
 const CAMPOS = ['empresa', 'razao_social', 'cnpj', 'nicho', 'tamanho', 'cep', 'endereco',
                 'complemento', 'cidade', 'estado', 'contato', 'telefone', 'email', 'site', 'instagram'];
 
-const zTexto300 = z.any().transform((x) => v.texto(x, 300));
+const zTexto300 = z.any().optional().transform((x) => v.texto(x, 300));
 
 // Monta um shape com todos os campos texto (aparados em 300 chars).
 const shape = {};
@@ -27,13 +27,13 @@ const atualizarClienteSchema = z.object(shape).partial();
 
 // POST /api/clientes/:id/servicos
 const servicoClienteSchema = z.object({
-  nome: z.any().transform((x) => v.texto(x, 80)).refine((s) => s.length > 0, 'Informe o serviço'),
+  nome: z.any().optional().transform((x) => v.texto(x, 80)).refine((s) => s.length > 0, 'Informe o serviço'),
 });
 
 // POST /api/clientes/:id/datas  (a data vem de um <input type="date">; vale dia e mes)
 const dataClienteSchema = z.object({
-  data: z.any().transform((x) => v.dataOuNull(x)).refine((d) => d !== null, 'Informe a data'),
-  nome: z.any().transform((x) => v.texto(x, 120)).refine((s) => s.length > 0, 'Informe o nome da data'),
+  data: z.any().optional().transform((x) => v.dataOuNull(x)).refine((d) => d !== null, 'Informe a data'),
+  nome: z.any().optional().transform((x) => v.texto(x, 120)).refine((s) => s.length > 0, 'Informe o nome da data'),
 });
 
 module.exports = { criarClienteSchema, atualizarClienteSchema, servicoClienteSchema, dataClienteSchema, CAMPOS };

@@ -5,22 +5,22 @@ const v = require('../utils/validar');
 
 // Reaproveita as MESMAS funcoes de normalizacao usadas antes, agora
 // dentro do zod. Comportamento identico ao codigo manual anterior.
-const zTexto = (max) => z.any().transform((x) => v.texto(x, max));
-const zInteiroOuNull = z.any().transform((x) => v.inteiroOuNull(x));
-const zDataOuNull = z.any().transform((x) => v.dataOuNull(x));
-const zPrioridade = z.any().transform((x) => v.prioridade(x));
-const zResponsaveis = z.any().transform((x) => v.listaDeInteiros(x));
+const zTexto = (max) => z.any().optional().transform((x) => v.texto(x, max));
+const zInteiroOuNull = z.any().optional().transform((x) => v.inteiroOuNull(x));
+const zDataOuNull = z.any().optional().transform((x) => v.dataOuNull(x));
+const zPrioridade = z.any().optional().transform((x) => v.prioridade(x));
+const zResponsaveis = z.any().optional().transform((x) => v.listaDeInteiros(x));
 // Recorrencia: so as frequencias conhecidas passam; qualquer outra coisa
 // (inclusive vazio) vira null, ou seja, tarefa que nao repete.
 const RECORRENCIAS = ['diaria', 'semanal', 'quinzenal', 'mensal'];
-const zRecorrencia = z.any().transform((x) => {
+const zRecorrencia = z.any().optional().transform((x) => {
   const s = String(x ?? '').trim();
   return RECORRENCIAS.includes(s) ? s : null;
 });
 
 // POST /api/tarefas
 const criarTarefaSchema = z.object({
-  setor_id: z.any().transform((x) => v.inteiroOuNull(x))
+  setor_id: z.any().optional().transform((x) => v.inteiroOuNull(x))
     .refine((n) => n !== null, 'Setor é obrigatório'),
   titulo: zTexto(200).refine((s) => s.length > 0, 'Título é obrigatório'),
   descricao: zTexto(5000),

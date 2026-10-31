@@ -148,6 +148,9 @@ async function setParticipantes(eventoId, ids) {
   }
 }
 
+// chave da conversa direta: os dois ids em ordem, para A com B e B com A darem igual
+const chaveDireta = (a, b) => [Number(a), Number(b)].sort((x, y) => x - y).join(':');
+
 // conversa vista por $1 (nao_lidas depende de quem pergunta; $1 pode ser null)
 const CONVERSA_SELECT = `
   SELECT c.*,
@@ -441,22 +444,27 @@ module.exports = {
     const iniciaTrabalho = primeiraId && colunaId !== primeiraId && !col.e_conclusao;
     if (iniciaTrabalho && !andamentoInicio) andamentoInicio = new Date();
 
-    // conclusao
-    let concluiuAgora = false;
-    let concluida_em = tr.rows[0].concluida_em;
-    if (col.e_conclusao && !concluida_em) { concluida_em = new Date(); concluiuAgora = true; }
-    else if (!col.e_conclusao) { concluida_em = null; }
-
     // contador de retrabalho: incrementa ao ENTRAR numa coluna de retrabalho.
     // rt vem de um conjunto fixo (design/edicao/pdf), nao de entrada do usuario.
     const rt = ehRetrabalho(col.nome);
     const setRetr = rt ? `, retrabalho_${rt} = retrabalho_${rt} + 1` : '';
 
+    // fora da conclusao a data some; na conclusao ela e gravada abaixo
+    const setConclusao = col.e_conclusao ? '' : ', concluida_em = NULL';
     await q(
       `UPDATE tarefas
-          SET coluna_id = $1, concluida_em = $2, andamento_inicio = $3${setRetr}
-        WHERE id = $4`,
-      [colunaId, concluida_em, andamentoInicio, id]);
+          SET coluna_id = $1, andamento_inicio = $2${setConclusao}${setRetr}
+        WHERE id = $3`,
+      [colunaId, andamentoInicio, id]);
+
+    // "concluiu agora" sai de um UPDATE condicional: com dois pedidos ao mesmo
+    // tempo, so um acha concluida_em vazio (antes os dois liam vazio e os dois
+    // disparavam notificacao e a proxima recorrencia)
+    let concluiuAgora = false;
+    if (col.e_conclusao) {
+      const c = await q('UPDATE tarefas SET concluida_em = now() WHERE id = $1 AND concluida_em IS NULL', [id]);
+      concluiuAgora = c.rowCount > 0;
+    }
     return { tarefa: await this.buscarTarefa(id), concluiuAgora };
   },
   async excluirTarefa(id) {
@@ -486,6 +494,55 @@ module.exports = {
        new Date(dados.visto || Date.now())]);
     return true;
   },
+  // Soma uma falha numa operacao so do banco: duas tentativas ao mesmo tempo
+  // contam duas vezes (antes liam o mesmo valor e as duas gravavam "1").
+  // limite null = so conta, nunca trava.
+  async somarFalhaBloqueio(chave, { limite = null, ate = null } = {}) {
+    const r = await q(
+      `INSERT INTO login_bloqueio (chave, falhas, ate, visto)
+       VALUES ($1, 1, CASE WHEN $2::int IS NOT NULL AND 1 >= $2::int THEN $3::timestamptz END, now())
+       ON CONFLICT (chave) DO UPDATE SET
+         falhas = login_bloqueio.falhas + 1,
+         ate = CASE WHEN $2::int IS NOT NULL AND login_bloqueio.falhas + 1 >= $2::int
+                    THEN COALESCE(login_bloqueio.ate, $3::timestamptz) ELSE login_bloqueio.ate END,
+         visto = now()
+       RETURNING falhas, ate`,
+      [chave, limite, ate ? new Date(ate) : null]);
+    const row = r.rows[0];
+    return { falhas: row.falhas, ate: row.ate ? new Date(row.ate).getTime() : null };
+  },
+
+  // ---------------- CONTADORES DE USO (limites por janela de tempo) ----------------
+  // Soma "quantidade" na chave dentro de uma janela; janela vencida recomeça.
+  // Atomico no banco: vale entre requisicoes simultaneas, entre instancias da
+  // API e sobrevive a reinicio.
+  async somarUso(chave, quantidade, janelaMs) {
+    const r = await q(
+      `INSERT INTO limites_uso (chave, contador, reinicia_em)
+       VALUES ($1, $2, now() + ($3::bigint * interval '1 millisecond'))
+       ON CONFLICT (chave) DO UPDATE SET
+         contador = CASE WHEN limites_uso.reinicia_em <= now() THEN $2 ELSE limites_uso.contador + $2 END,
+         reinicia_em = CASE WHEN limites_uso.reinicia_em <= now()
+                            THEN now() + ($3::bigint * interval '1 millisecond') ELSE limites_uso.reinicia_em END
+       RETURNING contador, reinicia_em`,
+      [chave, quantidade, Math.round(janelaMs)]);
+    const row = r.rows[0];
+    return { contador: Number(row.contador), reinicia_em: new Date(row.reinicia_em).getTime() };
+  },
+  async lerUso(chave) {
+    const r = await q('SELECT contador, reinicia_em FROM limites_uso WHERE chave = $1 AND reinicia_em > now()', [chave]);
+    const row = r.rows[0];
+    return row ? { contador: Number(row.contador), reinicia_em: new Date(row.reinicia_em).getTime() } : null;
+  },
+  async zerarUso(chave) {
+    await q('DELETE FROM limites_uso WHERE chave = $1', [chave]);
+    return true;
+  },
+  async limparUsoVencido() {
+    await q('DELETE FROM limites_uso WHERE reinicia_em <= now()');
+    return true;
+  },
+
   async limparBloqueios(chaves) {
     if (!chaves || !chaves.length) return true;
     await q('DELETE FROM login_bloqueio WHERE chave = ANY($1)', [chaves]);
@@ -533,6 +590,11 @@ module.exports = {
       WHERE t.recorrencia IS NOT NULL AND t.recorrencia_gerou_id IS NULL
       ORDER BY t.id`);
     return r.rows;
+  },
+  // -2 = "gerando agora": so quem achou a serie livre (NULL) leva a reserva
+  async reservarRecorrencia(id) {
+    const r = await q('UPDATE tarefas SET recorrencia_gerou_id = -2 WHERE id = $1 AND recorrencia_gerou_id IS NULL', [id]);
+    return r.rowCount > 0;
   },
   async marcarRecorrenciaGerada(id, novaId) {
     const r = await q('UPDATE tarefas SET recorrencia_gerou_id = $1 WHERE id = $2', [novaId, id]);
@@ -730,19 +792,21 @@ module.exports = {
     return r.rows[0] || null;
   },
   async buscarConversaDireta(uidA, uidB) {
-    const r = await q(
-      `SELECT c.id FROM chat_conversas c
-        WHERE c.tipo = 'direta'
-          AND (SELECT count(*) FROM chat_membros m WHERE m.conversa_id = c.id) = 2
-          AND EXISTS (SELECT 1 FROM chat_membros m WHERE m.conversa_id = c.id AND m.usuario_id = $1)
-          AND EXISTS (SELECT 1 FROM chat_membros m WHERE m.conversa_id = c.id AND m.usuario_id = $2)
-        LIMIT 1`, [uidA, uidB]);
+    const r = await q('SELECT id FROM chat_conversas WHERE chave_direta = $1', [chaveDireta(uidA, uidB)]);
     return r.rows[0] ? this.buscarConversa(r.rows[0].id, uidA) : null;
   },
+  // conversa direta: a chave unica do par impede duas conversas iguais mesmo
+  // com os dois abrindo ao mesmo tempo; quem chega depois recebe a existente
   async criarConversa(d) {
+    const chave = d.tipo === 'direta' ? chaveDireta(d.membros[0], d.membros[1]) : null;
     const r = await q(
-      'INSERT INTO chat_conversas (tipo, nome, criado_por) VALUES ($1,$2,$3) RETURNING id',
-      [d.tipo, d.nome || '', d.criado_por || null]);
+      `INSERT INTO chat_conversas (tipo, nome, criado_por, chave_direta) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (chave_direta) DO NOTHING RETURNING id`,
+      [d.tipo, d.nome || '', d.criado_por || null, chave]);
+    if (!r.rows[0]) {
+      const existente = await this.buscarConversaDireta(d.membros[0], d.membros[1]);
+      return existente ? { ...existente, ja_existia: true } : null;
+    }
     const id = r.rows[0].id;
     for (const uid of new Set(d.membros || [])) {
       await q('INSERT INTO chat_membros (conversa_id, usuario_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [id, uid]);

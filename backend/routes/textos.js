@@ -20,8 +20,8 @@ const { comIdValidado } = require('../middleware/params');
 const v = require('../utils/validar');
 
 const textoSchema = z.object({
-  titulo: z.any().transform((x) => v.texto(x, 150)).refine((s) => s.length > 0, 'Informe o título'),
-  conteudo: z.any().transform((x) => v.texto(x, 20000)),
+  titulo: z.any().optional().transform((x) => v.texto(x, 150)).refine((s) => s.length > 0, 'Informe o título'),
+  conteudo: z.any().optional().transform((x) => v.texto(x, 20000)),
 });
 
 module.exports = function rotasDeTextos(tipo) {

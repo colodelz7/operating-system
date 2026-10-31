@@ -5,6 +5,7 @@ const repo = require('../data');
 const { exigirLogin, exigirGestaoDeClientes } = require('../middleware/auth');
 const { upload, caminhoSeguro } = require('../middleware/upload');
 const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
+const { limiteDeUpload, contarUpload } = require('../middleware/rateLimit');
 const { validate } = require('../middleware/validate');
 const { registrar } = require('../middleware/auditoria');
 const { comIdValidado } = require('../middleware/params');
@@ -15,14 +16,6 @@ const {
 const router = express.Router();
 // :id sempre numerico (nunca chega NaN no banco)
 comIdValidado(router);
-
-// GET /api/clientes/logo/:arquivo  -> serve a imagem da logo (logado)
-router.get('/logo/:arquivo', exigirLogin, (req, res) => {
-  // caminhoSeguro recusa qualquer nome que tente sair da pasta de uploads
-  const destino = caminhoSeguro(req.params.arquivo);
-  if (!destino) return res.status(400).json({ erro: 'Arquivo inválido' });
-  res.sendFile(destino, (err) => { if (err) res.status(404).end(); });
-});
 
 // GET /api/clientes  (qualquer usuario logado pode consultar)
 router.get('/', exigirLogin, async (req, res, next) => {
@@ -59,7 +52,7 @@ router.get('/:id/logo', exigirLogin, async (req, res, next) => {
 
 // POST /api/clientes   (logo opcional no campo "logo")
 // upload.single roda antes do validate para popular req.body (multipart).
-router.post('/', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), conferirAssinatura, validate(criarClienteSchema), async (req, res, next) => {
+router.post('/', exigirLogin, exigirGestaoDeClientes, limiteDeUpload, upload.single('logo'), conferirAssinatura, contarUpload, validate(criarClienteSchema), async (req, res, next) => {
   try {
     const dados = { ...req.body };
     if (req.file) dados.logo_path = req.file.filename;
@@ -73,7 +66,7 @@ router.post('/', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), con
 });
 
 // PUT /api/clientes/:id
-router.put('/:id', exigirLogin, exigirGestaoDeClientes, upload.single('logo'), conferirAssinatura, validate(atualizarClienteSchema), async (req, res, next) => {
+router.put('/:id', exigirLogin, exigirGestaoDeClientes, limiteDeUpload, upload.single('logo'), conferirAssinatura, contarUpload, validate(atualizarClienteSchema), async (req, res, next) => {
   try {
     const dados = { ...req.body };
     if (req.file) dados.logo_path = req.file.filename;

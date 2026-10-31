@@ -37,7 +37,7 @@ router.use((req, res, next) => {
 });
 
 // so http(s); o resto (javascript:, data:...) vira vazio
-const zUrl = z.any().transform((x) => {
+const zUrl = z.any().optional().transform((x) => {
   const s = v.texto(x, 500);
   if (!s) return '';
   try {
@@ -47,13 +47,13 @@ const zUrl = z.any().transform((x) => {
 });
 
 const campos = {
-  servico: z.any().transform((x) => v.texto(x, 150)).refine((s) => s.length > 0, 'Informe o serviço (ex.: Hospedagem, Instagram)'),
-  cliente_id: z.any().transform((x) => v.inteiroOuNull(x)),
+  servico: z.any().optional().transform((x) => v.texto(x, 150)).refine((s) => s.length > 0, 'Informe o serviço (ex.: Hospedagem, Instagram)'),
+  cliente_id: z.any().optional().transform((x) => v.inteiroOuNull(x)),
   url: zUrl,
-  login: z.any().transform((x) => v.texto(x, 200)),
+  login: z.any().optional().transform((x) => v.texto(x, 200)),
   // senha: undefined = nao mexe; '' = apaga; texto = troca
-  senha: z.any().transform((x) => (x === undefined || x === null ? undefined : String(x).slice(0, 500))),
-  observacoes: z.any().transform((x) => v.texto(x, 2000)),
+  senha: z.any().optional().transform((x) => (x === undefined || x === null ? undefined : String(x).slice(0, 500))),
+  observacoes: z.any().optional().transform((x) => v.texto(x, 2000)),
 };
 const criarSchema = z.object(campos);
 const atualizarSchema = z.object(campos).partial();

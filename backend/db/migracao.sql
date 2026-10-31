@@ -242,4 +242,19 @@ CREATE TABLE IF NOT EXISTS briefing_arquivos (
 );
 CREATE INDEX IF NOT EXISTS idx_briefing_arquivos ON briefing_arquivos(briefing_id);
 
+-- ---------------- LIMITES DE USO (contadores por janela de tempo) ----------------
+-- Rate limit do login, do chat, do cofre e do assistente, e a cota de upload
+-- por pessoa. No banco (e nao na memoria do processo) para valer entre
+-- instancias da API e sobreviver a reinicio.
+CREATE TABLE IF NOT EXISTS limites_uso (
+  chave       TEXT PRIMARY KEY,
+  contador    BIGINT NOT NULL DEFAULT 0,
+  reinicia_em TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_limites_uso_reinicia ON limites_uso(reinicia_em);
+
+-- conversa direta unica por par de pessoas ('menorId:maiorId'); grupo fica NULL
+ALTER TABLE chat_conversas ADD COLUMN IF NOT EXISTS chave_direta TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_chat_conversa_direta ON chat_conversas(chave_direta);
+
 COMMIT;

@@ -20,7 +20,7 @@ const CATEGORIAS = {
   cofre: { entidade: 'acesso' },
 };
 
-const umDe = (lista) => z.any().transform((x) => {
+const umDe = (lista) => z.any().optional().transform((x) => {
   const s = String(x ?? '').trim();
   return lista.includes(s) ? s : null;
 });
@@ -29,16 +29,16 @@ const filtroHistoricoSchema = z.object({
   categoria: umDe(Object.keys(CATEGORIAS)),
   entidade: umDe(ENTIDADES),
   tipo: umDe(TIPOS),
-  usuario_id: z.any().transform((x) => v.inteiroOuNull(x)),
-  setor: z.any().transform((x) => v.inteiroOuNull(x)),
-  cliente: z.any().transform((x) => v.texto(x, 200) || null),
-  responsavel: z.any().transform((x) => v.texto(x, 120) || null),
+  usuario_id: z.any().optional().transform((x) => v.inteiroOuNull(x)),
+  setor: z.any().optional().transform((x) => v.inteiroOuNull(x)),
+  cliente: z.any().optional().transform((x) => v.texto(x, 200) || null),
+  responsavel: z.any().optional().transform((x) => v.texto(x, 120) || null),
   prioridade: umDe(v.PRIORIDADES),
-  de: z.any().transform((x) => v.dataOuNull(x)),
-  ate: z.any().transform((x) => v.dataOuNull(x)),
-  q: z.any().transform((x) => v.texto(x, 120) || null),
-  antes_de: z.any().transform((x) => v.inteiroOuNull(x)), // cursor da proxima pagina
-  limit: z.any().transform((x) => {
+  de: z.any().optional().transform((x) => v.dataOuNull(x)),
+  ate: z.any().optional().transform((x) => v.dataOuNull(x)),
+  q: z.any().optional().transform((x) => v.texto(x, 120) || null),
+  antes_de: z.any().optional().transform((x) => v.inteiroOuNull(x)), // cursor da proxima pagina
+  limit: z.any().optional().transform((x) => {
     const n = v.inteiroOuNull(x);
     if (n === null) return 300;
     return Math.min(Math.max(n, 1), 500);

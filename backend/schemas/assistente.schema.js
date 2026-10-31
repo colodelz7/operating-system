@@ -9,9 +9,9 @@ const v = require('../utils/validar');
 const MAX_HISTORICO = 12;
 
 const mensagemSchema = z.object({
-  mensagem: z.any().transform((x) => v.texto(x, 2000))
+  mensagem: z.any().optional().transform((x) => v.texto(x, 2000))
     .refine((s) => s.length > 0, 'Escreva uma mensagem'),
-  historico: z.any().transform((x) => {
+  historico: z.any().optional().transform((x) => {
     if (!Array.isArray(x)) return [];
     return x.slice(-MAX_HISTORICO).map((m) => ({
       autor: (m && m.autor) === 'bot' ? 'bot' : 'usuario',

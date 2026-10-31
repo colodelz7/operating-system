@@ -16,6 +16,7 @@ const { registrar } = require('../middleware/auditoria');
 const { comIdValidado } = require('../middleware/params');
 const { upload, apagarArquivo, caminhoSeguro } = require('../middleware/upload');
 const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
+const { limiteDeUpload, contarUpload } = require('../middleware/rateLimit');
 const { CAMPOS, CHAVES, limparRespostas, contarPreenchidos } = require('../services/briefing');
 const v = require('../utils/validar');
 
@@ -24,9 +25,9 @@ comIdValidado(router);
 router.use(exigirLogin);
 
 const campos = {
-  empresa: z.any().transform((x) => v.texto(x, 200)).refine((s) => s.length > 0, 'Informe o nome da empresa'),
-  cliente_id: z.any().transform((x) => v.inteiroOuNull(x)),
-  respostas: z.any().transform(limparRespostas),
+  empresa: z.any().optional().transform((x) => v.texto(x, 200)).refine((s) => s.length > 0, 'Informe o nome da empresa'),
+  cliente_id: z.any().optional().transform((x) => v.inteiroOuNull(x)),
+  respostas: z.any().optional().transform(limparRespostas),
 };
 const criarSchema = z.object(campos);
 const atualizarSchema = z.object(campos).partial();
@@ -144,7 +145,7 @@ router.post('/:id/arquivos', async (req, res, next) => {
     req.briefing = b;
     next();
   } catch (e) { next(e); }
-}, upload.single('arquivo'), conferirAssinatura, async (req, res, next) => {
+}, limiteDeUpload, upload.single('arquivo'), conferirAssinatura, contarUpload, async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ erro: 'Envie um arquivo' });
     const a = await repo.criarArquivoBriefing({

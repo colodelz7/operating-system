@@ -30,14 +30,14 @@ function hostDePush(host) {
   const h = String(host || '').toLowerCase();
   return HOSTS_PUSH.some((d) => h === d || h.endsWith('.' + d));
 }
-const zEndpoint = z.any().transform((x) => String(x ?? '').trim().slice(0, 1000))
+const zEndpoint = z.any().optional().transform((x) => String(x ?? '').trim().slice(0, 1000))
   .refine((s) => {
     try {
       const u = new URL(s);
       return u.protocol === 'https:' && hostDePush(u.hostname);
     } catch (_) { return false; }
   }, 'Inscrição inválida');
-const zChave = z.any().transform((x) => String(x ?? '').trim().slice(0, 200))
+const zChave = z.any().optional().transform((x) => String(x ?? '').trim().slice(0, 200))
   .refine((s) => /^[A-Za-z0-9_=-]+$/.test(s), 'Inscrição inválida');
 
 const inscreverSchema = z.object({

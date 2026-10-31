@@ -73,21 +73,17 @@ async function registrarFalha(ip, usuario) {
   const limite = config.loginBloqueioTentativas;
   const agora = Date.now();
 
-  // as duas chaves que travam
+  // as duas chaves que travam. ler() so descarta o registro vencido; a soma
+  // e uma operacao unica no repositorio, entao tentativas simultaneas contam
+  // todas (antes liam o mesmo valor e cada uma gravava "1").
   for (const chave of [chaveIp(ip), chavePar(usuario, ip)]) {
-    const reg = (await ler(chave)) || { falhas: 0, ate: null };
-    const falhas = reg.falhas + 1;
-    await repo.salvarBloqueio(chave, {
-      falhas,
-      ate: falhas >= limite ? agora + config.loginBloqueioMs : null,
-      visto: agora,
-    });
+    await ler(chave);
+    await repo.somarFalhaBloqueio(chave, { limite, ate: agora + config.loginBloqueioMs });
   }
 
   // o contador da conta so observa, nunca bloqueia
-  const regConta = (await ler(chaveConta(usuario))) || { falhas: 0, ate: null };
-  const falhasDaConta = regConta.falhas + 1;
-  await repo.salvarBloqueio(chaveConta(usuario), { falhas: falhasDaConta, ate: null, visto: agora });
+  await ler(chaveConta(usuario));
+  const { falhas: falhasDaConta } = await repo.somarFalhaBloqueio(chaveConta(usuario), { limite: null });
 
   const st = await estado(ip, usuario);
   const par = await ler(chavePar(usuario, ip));

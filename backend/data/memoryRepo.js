@@ -25,6 +25,7 @@ const db = {
   comentarios: [],
   historico: [],
   bloqueios: new Map(),
+  uso: new Map(),      // contadores de limite por janela de tempo
   eventos: [],
   chatConversas: [],
   chatMembros: [],     // { conversa_id, usuario_id, ultima_lida_id }
@@ -177,7 +178,9 @@ function montaTarefa(t) {
   const responsaveis = t.responsaveis
     .map((uid) => db.usuarios.find((u) => u.id === uid)).filter(Boolean)
     .map((u) => ({ id: u.id, nome: u.nome, usuario: u.usuario }));
-  const anexos = db.anexos.filter((a) => a.tarefa_id === t.id).map(clone);
+  // mesmos campos do pgRepo: o nome do arquivo em disco nunca sai daqui
+  const anexos = db.anexos.filter((a) => a.tarefa_id === t.id)
+    .map((a) => ({ id: a.id, nome_original: a.nome_original, mime: a.mime, tamanho: a.tamanho }));
   return {
     id: t.id,
     titulo: t.titulo,
@@ -275,6 +278,8 @@ module.exports = {
     return db.usuarios.filter((u) => u.papel === 'admin' && u.ativo !== false).length;
   },
   async criarUsuario(d) {
+    // mesma barreira da chave unica do Postgres (login repetido -> 23505)
+    if (db.usuarios.some((x) => x.usuario === d.usuario)) throw Object.assign(new Error('login duplicado'), { code: '23505' });
     const u = {
       id: nextId(db.usuarios),
       nome: d.nome, usuario: d.usuario, senha_hash: d.senha_hash,
@@ -513,6 +518,13 @@ module.exports = {
       .filter((t) => t.recorrencia && !t.recorrencia_gerou_id)
       .map(montaTarefa);
   },
+  // -2 = "gerando agora": so quem achou a serie livre leva a reserva
+  async reservarRecorrencia(id) {
+    const t = db.tarefas.find((x) => x.id === id);
+    if (!t || t.recorrencia_gerou_id) return false;
+    t.recorrencia_gerou_id = -2;
+    return true;
+  },
   async marcarRecorrenciaGerada(id, novaId) {
     const t = db.tarefas.find((x) => x.id === id);
     if (!t) return false;
@@ -600,6 +612,43 @@ module.exports = {
     });
     return true;
   },
+  // mesma regra do pgRepo; aqui ler e gravar acontecem sem await no meio,
+  // entao duas chamadas simultaneas nao se atropelam
+  async somarFalhaBloqueio(chave, { limite = null, ate = null } = {}) {
+    const b = db.bloqueios.get(chave) || { falhas: 0, ate: null };
+    const falhas = b.falhas + 1;
+    const novo = {
+      falhas,
+      ate: limite != null && falhas >= limite ? (b.ate || ate) : b.ate,
+      visto: Date.now(),
+    };
+    db.bloqueios.set(chave, novo);
+    return { falhas: novo.falhas, ate: novo.ate };
+  },
+
+  // ---------------- CONTADORES DE USO (limites por janela de tempo) ----------------
+  async somarUso(chave, quantidade, janelaMs) {
+    const agora = Date.now();
+    const u = db.uso.get(chave);
+    const atual = u && u.reinicia_em > agora ? u : { contador: 0, reinicia_em: agora + janelaMs };
+    atual.contador += quantidade;
+    db.uso.set(chave, atual);
+    return { ...atual };
+  },
+  async lerUso(chave) {
+    const u = db.uso.get(chave);
+    return u && u.reinicia_em > Date.now() ? { ...u } : null;
+  },
+  async zerarUso(chave) {
+    db.uso.delete(chave);
+    return true;
+  },
+  async limparUsoVencido() {
+    const agora = Date.now();
+    for (const [chave, u] of db.uso) if (u.reinicia_em <= agora) db.uso.delete(chave);
+    return true;
+  },
+
   async limparBloqueios(chaves) {
     (chaves || []).forEach((c) => db.bloqueios.delete(c));
     return true;
@@ -730,7 +779,11 @@ module.exports = {
   },
   async criarConversa(d) {
     const agora = new Date().toISOString();
-    const c = { id: nextId(db.chatConversas), tipo: d.tipo, nome: d.nome || '',
+    // mesma regra da chave unica do Postgres: um par, uma conversa direta
+    const chave = d.tipo === 'direta' ? [Number(d.membros[0]), Number(d.membros[1])].sort((x, y) => x - y).join(':') : null;
+    const existente = chave && db.chatConversas.find((x) => x.chave_direta === chave);
+    if (existente) return { ...montaConversa(existente, d.criado_por), ja_existia: true };
+    const c = { id: nextId(db.chatConversas), tipo: d.tipo, nome: d.nome || '', chave_direta: chave,
                 criado_por: d.criado_por || null, criado_em: agora, atualizado_em: agora };
     db.chatConversas.push(c);
     Array.from(new Set(d.membros || [])).forEach((uid) => {

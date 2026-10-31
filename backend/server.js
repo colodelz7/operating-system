@@ -113,6 +113,12 @@ app.use((err, req, res, next) => {
   if (err && (err.type === 'encoding.unsupported' || err.type === 'charset.unsupported')) {
     return res.status(415).json({ erro: 'Codificação não suportada' });
   }
+  // chave unica do Postgres: dois pedidos iguais ao mesmo tempo (ex.: o mesmo
+  // login criado duas vezes) passam pela checagem da rota e o banco barra o
+  // segundo. Isso e conflito do cliente, nao erro do servidor.
+  if (err && err.code === '23505') {
+    return res.status(409).json({ erro: 'Esse registro já existe' });
+  }
 
   console.error('[erro]', err);
   res.status(500).json({ erro: 'Erro interno do servidor' });
@@ -135,6 +141,8 @@ if (require.main === module) {
     try {
       await repo.init();
       require('./services/recorrencia').iniciarRotina();
+      // contadores de limite vencidos saem da tabela de hora em hora
+      setInterval(() => { repo.limparUsoVencido().catch(() => {}); }, 60 * 60 * 1000).unref();
       app.listen(config.port, config.host, () => {
         const publico = config.host === '0.0.0.0' || config.host === '::';
         console.log('==================================================');

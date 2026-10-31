@@ -137,6 +137,10 @@ const config = {
   uploadMaxBytes: 25 * 1024 * 1024,
   // Foto de perfil: so imagem e bem menor
   avatarMaxBytes: 3 * 1024 * 1024,
+  // Cota de upload por pessoa (todos os lugares que recebem arquivo somados):
+  // quantos arquivos por hora e quantos bytes por dia.
+  uploadMaxPorHora: parseInt(process.env.UPLOAD_MAX_POR_HORA, 10) || 120,
+  uploadCotaDiariaBytes: (parseInt(process.env.UPLOAD_COTA_DIARIA_MB, 10) || 2048) * 1024 * 1024,
   // Origens extras aceitas nas escritas (checagem anti-CSRF). Por padrao
   // basta ser o mesmo host da requisicao; aqui entram casos como um dominio
   // diferente do proxy. Lista separada por virgula.

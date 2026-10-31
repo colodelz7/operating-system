@@ -29,11 +29,26 @@ function caminhoSeguro(nomeArquivo) {
   return destino.startsWith(raiz) ? destino : null;
 }
 
+// unica fonte da extensao gravada em disco (tipos da allowlist do config)
+const EXTENSAO_POR_TIPO = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'application/pdf': '.pdf',
+  'application/msword': '.doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, PASTA_UPLOADS),
   filename: (req, file, cb) => {
-    // nome no disco = aleatorio (nunca confiar no nome do usuario)
-    cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${extensaoSegura(file.originalname)}`);
+    // nome no disco = aleatorio, e a extensao vem do TIPO aceito, nunca do
+    // nome enviado: senao um "x.html" com cabecalho de PNG seria servido
+    // como pagina HTML dentro do sistema
+    cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${EXTENSAO_POR_TIPO[file.mimetype] || ''}`);
   },
 });
 

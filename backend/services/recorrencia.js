@@ -111,22 +111,34 @@ async function gerarProxima(tarefa, { motivo = 'recorrência' } = {}) {
   const colunas = await repo.listarColunas(tarefa.setor_id);
   if (!colunas.length) return null;
 
-  const nova = await repo.criarTarefa({
-    titulo: tarefa.titulo,
-    descricao: tarefa.descricao,
-    setor_id: tarefa.setor_id,
-    coluna_id: colunas[0].id, // sempre recomeça no início do fluxo
-    cliente_id: tarefa.cliente_id,
-    prioridade: tarefa.prioridade,
-    data_inicio: deslocamento(novaEntrega, tarefa.data_inicio),
-    data_entrega: novaEntrega,
-    data_publicacao: deslocamento(novaEntrega, tarefa.data_publicacao),
-    criado_por: tarefa.criado_por,
-    responsaveis: (tarefa.responsaveis || []).map((r) => r.id),
-    recorrencia: tarefa.recorrencia,
-    recorrencia_ate: tarefa.recorrencia_ate,
-    recorrencia_origem_id: tarefa.id,
-  });
+  // Reserva a serie no banco ANTES de criar: so uma chamada consegue (dois
+  // cliques em "concluir", ou a conclusao junto com a varredura, geravam duas
+  // proximas tarefas). Quem perde a reserva sai sem fazer nada.
+  if (!(await repo.reservarRecorrencia(tarefa.id))) return null;
+
+  let nova;
+  try {
+    nova = await repo.criarTarefa({
+      titulo: tarefa.titulo,
+      descricao: tarefa.descricao,
+      setor_id: tarefa.setor_id,
+      coluna_id: colunas[0].id, // sempre recomeça no início do fluxo
+      cliente_id: tarefa.cliente_id,
+      prioridade: tarefa.prioridade,
+      data_inicio: deslocamento(novaEntrega, tarefa.data_inicio),
+      data_entrega: novaEntrega,
+      data_publicacao: deslocamento(novaEntrega, tarefa.data_publicacao),
+      criado_por: tarefa.criado_por,
+      responsaveis: (tarefa.responsaveis || []).map((r) => r.id),
+      recorrencia: tarefa.recorrencia,
+      recorrencia_ate: tarefa.recorrencia_ate,
+      recorrencia_origem_id: tarefa.id,
+    });
+  } catch (e) {
+    // nao conseguiu criar: libera a serie para a proxima tentativa
+    await repo.marcarRecorrenciaGerada(tarefa.id, null).catch(() => {});
+    throw e;
+  }
 
   await repo.marcarRecorrenciaGerada(tarefa.id, nova.id);
 

@@ -14,6 +14,7 @@ const repo = require('../data');
 const { exigirLogin } = require('../middleware/auth');
 const { uploadImagem, apagarArquivo, caminhoSeguro } = require('../middleware/upload');
 const { conferirAssinatura } = require('../middleware/assinaturaArquivo');
+const { limiteDeUpload, contarUpload } = require('../middleware/rateLimit');
 const { comIdValidado } = require('../middleware/params');
 
 const router = express.Router();
@@ -27,7 +28,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/equipe/eu/avatar   (campo "foto"; troca a propria foto)
-router.post('/eu/avatar', uploadImagem.single('foto'), conferirAssinatura, async (req, res, next) => {
+router.post('/eu/avatar', limiteDeUpload, uploadImagem.single('foto'), conferirAssinatura, contarUpload, async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ erro: 'Envie uma imagem PNG, JPG ou WEBP' });
     const r = await repo.definirAvatar(req.usuario.id, req.file.filename);

@@ -6,15 +6,15 @@ const v = require('../utils/validar');
 // papel valido: admin (Atendimento) ou membro
 const PAPEIS = ['admin', 'membro'];
 
-const zNome = z.any().transform((x) => v.texto(x, 120));
+const zNome = z.any().optional().transform((x) => v.texto(x, 120));
 // login: minusculo, sem espacos, so letras/numeros/. _ -
-const zLogin = z.any().transform((x) => String(x ?? '').toLowerCase().trim().replace(/\s+/g, ''));
-const zSenha = z.any().transform((x) => String(x ?? ''));
-const zSetor = z.any().transform((x) => v.inteiroOuNull(x));
-const zPapel = z.any().transform((x) => (PAPEIS.includes(x) ? x : 'membro'));
-const zColunas = z.any().transform((x) => v.listaDeInteiros(x));
+const zLogin = z.any().optional().transform((x) => String(x ?? '').toLowerCase().trim().replace(/\s+/g, ''));
+const zSenha = z.any().optional().transform((x) => String(x ?? ''));
+const zSetor = z.any().optional().transform((x) => v.inteiroOuNull(x));
+const zPapel = z.any().optional().transform((x) => (PAPEIS.includes(x) ? x : 'membro'));
+const zColunas = z.any().optional().transform((x) => v.listaDeInteiros(x));
 // booleano tolerante: aceita true/false, "true"/"false", 1/0 (form e JSON)
-const zBool = z.any().transform((x) => x === true || x === 1 || x === '1' || x === 'true');
+const zBool = z.any().optional().transform((x) => x === true || x === 1 || x === '1' || x === 'true');
 
 const RE_LOGIN = /^[a-z0-9._-]{2,40}$/;
 
